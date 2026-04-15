@@ -16,3 +16,4 @@ struct habit_tracker_macosTests {
     }
 
 }
+

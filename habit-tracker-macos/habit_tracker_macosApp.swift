@@ -12,7 +12,7 @@ import SwiftData
 struct habit_tracker_macosApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Habit.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -26,7 +26,10 @@ struct habit_tracker_macosApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .frame(minWidth: 900, minHeight: 600)
         }
         .modelContainer(sharedModelContainer)
+        .defaultSize(width: 1080, height: 720)
+        .windowResizability(.contentMinSize)
     }
 }
