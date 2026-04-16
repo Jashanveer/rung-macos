@@ -7,10 +7,7 @@ struct BackendHabit: Decodable, Identifiable {
     let checksByDate: [String: Bool]
 
     var completedDayKeys: [String] {
-        checksByDate
-            .filter { $0.value }
-            .map(\.key)
-            .sorted()
+        checksByDate.filter { $0.value }.map(\.key).sorted()
     }
 }
 
@@ -28,168 +25,105 @@ struct AccountabilityDashboard: Decodable {
     let notifications: [Notification]
 
     struct Profile: Decodable {
-        let userId: Int64
-        let username: String?
-        let email: String
-        let displayName: String
-        let avatarUrl: String?
-        let timezone: String
-        let language: String
-        let goals: String
+        let userId: Int64; let username: String?; let email: String
+        let displayName: String; let avatarUrl: String?
+        let timezone: String; let language: String; let goals: String
     }
-
     struct Level: Decodable {
-        let name: String
-        let weeklyConsistencyPercent: Int
-        let accountabilityScore: Int
-        let mentorEligible: Bool
-        let needsMentor: Bool
-        let note: String
+        let name: String; let weeklyConsistencyPercent: Int
+        let accountabilityScore: Int; let mentorEligible: Bool
+        let needsMentor: Bool; let note: String
     }
-
     struct MentorMatch: Decodable {
-        let id: Int64
-        let status: String
-        let mentor: UserSummary
-        let mentee: UserSummary
-        let matchScore: Int
-        let reasons: [String]
+        let id: Int64; let status: String
+        let mentor: UserSummary; let mentee: UserSummary
+        let matchScore: Int; let reasons: [String]
     }
-
     struct UserSummary: Decodable {
-        let userId: Int64
-        let displayName: String
-        let timezone: String
-        let language: String
-        let goals: String
-        let weeklyConsistencyPercent: Int
+        let userId: Int64; let displayName: String
+        let timezone: String; let language: String
+        let goals: String; let weeklyConsistencyPercent: Int
     }
-
     struct MenteeDashboard: Decodable {
-        let mentorTip: String
-        let missedHabitsToday: Int
-        let progressScore: Int
-        let messages: [Message]
+        let mentorTip: String; let missedHabitsToday: Int
+        let progressScore: Int; let messages: [Message]
     }
-
     struct MentorDashboard: Decodable {
-        let activeMenteeCount: Int
-        let mentees: [MenteeSummary]
+        let activeMenteeCount: Int; let mentees: [MenteeSummary]
     }
-
     struct MentorshipStatus: Decodable {
-        let canFindMentor: Bool
-        let hasMentor: Bool
-        let canChangeMentor: Bool
-        let lockedUntil: String?
-        let lockDaysRemaining: Int
-        let message: String
+        let canFindMentor: Bool; let hasMentor: Bool
+        let canChangeMentor: Bool; let lockedUntil: String?
+        let lockDaysRemaining: Int; let message: String
     }
-
     struct MenteeSummary: Decodable, Identifiable {
         var id: Int64 { matchId }
-
-        let matchId: Int64
-        let userId: Int64
-        let displayName: String
-        let missedHabitsToday: Int
-        let weeklyConsistencyPercent: Int
+        let matchId: Int64; let userId: Int64; let displayName: String
+        let missedHabitsToday: Int; let weeklyConsistencyPercent: Int
         let suggestedAction: String
     }
-
-    struct Rewards: Decodable {
-        let xp: Int
-        let coins: Int
-        let badges: [String]
-    }
-
+    struct Rewards: Decodable { let xp: Int; let coins: Int; let badges: [String] }
     struct WeeklyChallenge: Decodable {
-        let title: String
-        let description: String
-        let completedPerfectDays: Int
-        let targetPerfectDays: Int
-        let rank: Int
-        let leaderboard: [LeaderboardEntry]
+        let title: String; let description: String
+        let completedPerfectDays: Int; let targetPerfectDays: Int
+        let rank: Int; let leaderboard: [LeaderboardEntry]
     }
-
     struct LeaderboardEntry: Decodable, Identifiable {
         var id: String { "\(displayName)-\(score)-\(currentUser)" }
-
-        let displayName: String
-        let score: Int
-        let currentUser: Bool
+        let displayName: String; let score: Int; let currentUser: Bool
     }
-
     struct SocialPost: Decodable, Identifiable {
-        let id: Int64
-        let author: String
-        let message: String
-        let createdAt: String
+        let id: Int64; let author: String; let message: String; let createdAt: String
     }
-
     struct SocialDashboard: Decodable {
-        let friendCount: Int
-        let updates: [SocialActivity]
-        let suggestions: [FriendSummary]
+        let friendCount: Int; let updates: [SocialActivity]; let suggestions: [FriendSummary]
     }
-
     struct SocialActivity: Decodable, Identifiable {
-        let id: String
-        let userId: Int64
-        let displayName: String
-        let message: String
-        let weeklyConsistencyPercent: Int
-        let progressPercent: Int
-        let kind: String
-        let createdAt: String?
+        let id: String; let userId: Int64; let displayName: String
+        let message: String; let weeklyConsistencyPercent: Int
+        let progressPercent: Int; let kind: String; let createdAt: String?
     }
-
     struct FriendSummary: Decodable, Identifiable {
         var id: Int64 { userId }
-
-        let userId: Int64
-        let displayName: String
-        let weeklyConsistencyPercent: Int
-        let progressPercent: Int
-        let goals: String
+        let userId: Int64; let displayName: String
+        let weeklyConsistencyPercent: Int; let progressPercent: Int; let goals: String
     }
-
     struct Message: Decodable, Identifiable {
-        let id: Int64
-        let senderId: Int64
-        let senderName: String
-        let message: String
-        let nudge: Bool
-        let createdAt: String
+        let id: Int64; let senderId: Int64; let senderName: String
+        let message: String; let nudge: Bool; let createdAt: String
     }
-
     struct Notification: Decodable, Identifiable {
         var id: String { "\(type)-\(title)" }
-
-        let title: String
-        let body: String
-        let type: String
+        let title: String; let body: String; let type: String
     }
 }
 
+// MARK: - HabitBackendStore
+
 @MainActor
 final class HabitBackendStore: ObservableObject {
+    // MARK: Published state
+
     @Published private(set) var token: String?
     @Published var dashboard: AccountabilityDashboard?
     @Published var isSyncing = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
-    @Published private(set) var authRequestState: RequestState<Void> = .idle
-    @Published private(set) var habitListRequestState: RequestState<[BackendHabit]> = .idle
-    @Published private(set) var dashboardRequestState: RequestState<AccountabilityDashboard> = .idle
-    @Published private(set) var createHabitRequestState: RequestState<BackendHabit> = .idle
-    @Published private(set) var checkUpdateRequestState: RequestState<Void> = .idle
-    @Published private(set) var deleteHabitRequestState: RequestState<Void> = .idle
-    @Published private(set) var mentorRequestState: RequestState<Void> = .idle
-    @Published private(set) var messageRequestState: RequestState<Void> = .idle
-    @Published private(set) var friendRequestState: RequestState<Void> = .idle
-    @Published private(set) var streamRequestState: RequestState<Void> = .idle
-    @Published private(set) var liveMessagesByMatch: [Int64: [AccountabilityDashboard.Message]] = [:]
+
+    // Per-endpoint request states — UI can show per-section loading/error indicators
+    @Published private(set) var authRequestState:        RequestState<Void>                    = .idle
+    @Published private(set) var habitListRequestState:   RequestState<[BackendHabit]>           = .idle
+    @Published private(set) var dashboardRequestState:   RequestState<AccountabilityDashboard>  = .idle
+    @Published private(set) var createHabitRequestState: RequestState<BackendHabit>             = .idle
+    @Published private(set) var checkUpdateRequestState: RequestState<Void>                    = .idle
+    @Published private(set) var deleteHabitRequestState: RequestState<Void>                    = .idle
+    @Published private(set) var mentorRequestState:      RequestState<Void>                    = .idle
+    @Published private(set) var messageRequestState:     RequestState<Void>                    = .idle
+    @Published private(set) var friendRequestState:      RequestState<Void>                    = .idle
+    @Published private(set) var streamRequestState:      RequestState<Void>                    = .idle
+    @Published private(set) var liveMessagesByMatch:     [Int64: [AccountabilityDashboard.Message]] = [:]
+
+    // MARK: Private
 
     private let sessionKey = "habitTracker.localhost.session.v1"
     private let apiClient: BackendAPIClient
@@ -197,35 +131,37 @@ final class HabitBackendStore: ObservableObject {
     private let habitRepository: HabitRepository
     private let accountabilityRepository: AccountabilityRepository
     private let deviceRepository: DeviceRepository
+    /// Shared response cache; invalidated by any write that mutates the cached resource.
+    let responseCache = ResponseCache()
     private var streamTask: Task<Void, Never>?
     private var streamingMatchID: Int64?
     private var lastStreamEventID: String?
 
-    var isAuthenticated: Bool {
-        token != nil
-    }
+    var isAuthenticated: Bool { token != nil }
 
     init() {
-        let session = Self.loadSession(from: sessionKey)
+        let session = Self.loadSession(from: "habitTracker.localhost.session.v1")
         token = session?.accessToken
 
         let client = BackendAPIClient(initialSession: session)
         apiClient = client
-        authRepository = AuthRepository(client: client)
-        habitRepository = HabitRepository(client: client)
-        accountabilityRepository = AccountabilityRepository(client: client)
-        deviceRepository = DeviceRepository(client: client)
+        authRepository            = AuthRepository(client: client)
+        habitRepository           = HabitRepository(client: client)
+        accountabilityRepository  = AccountabilityRepository(client: client)
+        deviceRepository          = DeviceRepository(client: client)
     }
+
+    // MARK: - Convenience
 
     func messages(matchID: Int64?) -> [AccountabilityDashboard.Message] {
         guard let matchID else { return dashboard?.menteeDashboard.messages ?? [] }
         return liveMessagesByMatch[matchID] ?? dashboard?.menteeDashboard.messages ?? []
     }
 
-    func signIn(username: String, password: String) async {
-        authRequestState = .loading
-        refreshSyncingState()
+    // MARK: - Auth
 
+    func signIn(username: String, password: String) async {
+        authRequestState = .loading; refreshSyncingState()
         do {
             let session = try await authRepository.signIn(username: username, password: password)
             applySession(session)
@@ -236,20 +172,14 @@ final class HabitBackendStore: ObservableObject {
             errorMessage = error.localizedDescription
             authRequestState = .failure(error.localizedDescription)
         }
-
         refreshSyncingState()
     }
 
     func register(username: String, email: String, password: String, avatarURL: String) async {
-        authRequestState = .loading
-        refreshSyncingState()
-
+        authRequestState = .loading; refreshSyncingState()
         do {
             let session = try await authRepository.register(
-                username: username,
-                email: email,
-                password: password,
-                avatarURL: avatarURL
+                username: username, email: email, password: password, avatarURL: avatarURL
             )
             applySession(session)
             statusMessage = "Connected to localhost:8080"
@@ -259,25 +189,29 @@ final class HabitBackendStore: ObservableObject {
             errorMessage = error.localizedDescription
             authRequestState = .failure(error.localizedDescription)
         }
-
         refreshSyncingState()
     }
 
     func signOut() {
         stopStream()
         clearSession()
-        Task {
-            await apiClient.clearSession()
-        }
+        Task { await apiClient.clearSession() }
     }
 
-    func listHabits() async throws -> [BackendHabit] {
-        habitListRequestState = .loading
-        refreshSyncingState()
+    // MARK: - Habits (cache-aware)
 
+    func listHabits() async throws -> [BackendHabit] {
+        // Return cached value if still fresh
+        if let cached = await responseCache.cachedHabits() {
+            habitListRequestState = .success(cached)
+            return cached
+        }
+
+        habitListRequestState = .loading; refreshSyncingState()
         do {
             let habits = try await habitRepository.listHabits()
             await syncSessionFromClient()
+            await responseCache.cacheHabits(habits)
             habitListRequestState = .success(habits)
             errorMessage = nil
             refreshSyncingState()
@@ -291,12 +225,11 @@ final class HabitBackendStore: ObservableObject {
     }
 
     func createHabit(title: String) async throws -> BackendHabit {
-        createHabitRequestState = .loading
-        refreshSyncingState()
-
+        createHabitRequestState = .loading; refreshSyncingState()
         do {
             let habit = try await habitRepository.createHabit(title: title)
             await syncSessionFromClient()
+            await responseCache.invalidateHabits()   // force re-fetch on next list
             createHabitRequestState = .success(habit)
             errorMessage = nil
             refreshSyncingState()
@@ -310,12 +243,12 @@ final class HabitBackendStore: ObservableObject {
     }
 
     func setCheck(habitID: Int64, dateKey: String, done: Bool) async throws {
-        checkUpdateRequestState = .loading
-        refreshSyncingState()
-
+        checkUpdateRequestState = .loading; refreshSyncingState()
         do {
             _ = try await habitRepository.setCheck(habitID: habitID, dateKey: dateKey, done: done)
             await syncSessionFromClient()
+            await responseCache.invalidateHabits()
+            await responseCache.invalidateDashboard()
             checkUpdateRequestState = .success(())
             errorMessage = nil
             refreshSyncingState()
@@ -328,12 +261,11 @@ final class HabitBackendStore: ObservableObject {
     }
 
     func deleteHabit(habitID: Int64) async throws {
-        deleteHabitRequestState = .loading
-        refreshSyncingState()
-
+        deleteHabitRequestState = .loading; refreshSyncingState()
         do {
             try await habitRepository.deleteHabit(habitID: habitID)
             await syncSessionFromClient()
+            await responseCache.invalidateHabits()
             deleteHabitRequestState = .success(())
             errorMessage = nil
             refreshSyncingState()
@@ -345,34 +277,44 @@ final class HabitBackendStore: ObservableObject {
         }
     }
 
+    // MARK: - Dashboard (cache-aware)
+
     func refreshDashboard() async {
         guard token != nil else { return }
-        dashboardRequestState = .loading
-        refreshSyncingState()
 
+        // Return cached dashboard if fresh (e.g., refreshDashboard called multiple times quickly)
+        if let cached = await responseCache.cachedDashboard() {
+            if case .success = dashboardRequestState { return }  // already showing latest
+            applyDashboardUpdate(cached)
+            dashboardRequestState = .success(cached)
+            return
+        }
+
+        dashboardRequestState = .loading; refreshSyncingState()
         do {
-            let dashboardValue = try await accountabilityRepository.dashboard()
+            let value = try await accountabilityRepository.dashboard()
             await syncSessionFromClient()
-            applyDashboardUpdate(dashboardValue)
-            dashboardRequestState = .success(dashboardValue)
+            await responseCache.cacheDashboard(value)
+            applyDashboardUpdate(value)
+            dashboardRequestState = .success(value)
             errorMessage = nil
         } catch {
             handleAuthenticatedRequestError(error)
             dashboardRequestState = .failure(error.localizedDescription)
         }
-
         refreshSyncingState()
     }
 
+    // MARK: - Accountability (write methods always invalidate dashboard cache)
+
     func assignMentor() async {
         guard token != nil else { return }
-        mentorRequestState = .loading
-        refreshSyncingState()
-
+        mentorRequestState = .loading; refreshSyncingState()
         do {
-            let dashboardValue = try await accountabilityRepository.assignMentor()
+            let value = try await accountabilityRepository.assignMentor()
             await syncSessionFromClient()
-            applyDashboardUpdate(dashboardValue)
+            await responseCache.invalidateDashboard()
+            applyDashboardUpdate(value)
             statusMessage = "Mentor match updated"
             errorMessage = nil
             mentorRequestState = .success(())
@@ -380,38 +322,34 @@ final class HabitBackendStore: ObservableObject {
             handleAuthenticatedRequestError(error)
             mentorRequestState = .failure(error.localizedDescription)
         }
-
         refreshSyncingState()
     }
 
     func sendMenteeMessage(matchId: Int64, message: String) async {
         guard token != nil else { return }
-        messageRequestState = .loading
-        refreshSyncingState()
-
+        messageRequestState = .loading; refreshSyncingState()
         do {
-            let dashboardValue = try await accountabilityRepository.sendMenteeMessage(matchId: matchId, message: message)
+            let value = try await accountabilityRepository.sendMenteeMessage(matchId: matchId, message: message)
             await syncSessionFromClient()
-            applyDashboardUpdate(dashboardValue)
+            await responseCache.invalidateDashboard()
+            applyDashboardUpdate(value)
             messageRequestState = .success(())
             errorMessage = nil
         } catch {
             handleAuthenticatedRequestError(error)
             messageRequestState = .failure(error.localizedDescription)
         }
-
         refreshSyncingState()
     }
 
     func requestFriend(userID: Int64) async {
         guard token != nil else { return }
-        friendRequestState = .loading
-        refreshSyncingState()
-
+        friendRequestState = .loading; refreshSyncingState()
         do {
-            let dashboardValue = try await accountabilityRepository.requestFriend(friendUserID: userID)
+            let value = try await accountabilityRepository.requestFriend(friendUserID: userID)
             await syncSessionFromClient()
-            applyDashboardUpdate(dashboardValue)
+            await responseCache.invalidateDashboard()
+            applyDashboardUpdate(value)
             statusMessage = "Friend added"
             errorMessage = nil
             friendRequestState = .success(())
@@ -424,27 +362,23 @@ final class HabitBackendStore: ObservableObject {
 
     func registerDeviceToken(_ token: Data) async {
         guard isAuthenticated else { return }
-        let hexToken = token.map { String(format: "%02.2hhx", $0) }.joined()
-        do {
-            try await deviceRepository.registerToken(hexToken, platform: "macos")
-        } catch {
-            // Non-critical — app still works via SSE
-        }
+        let hex = token.map { String(format: "%02.2hhx", $0) }.joined()
+        do { try await deviceRepository.registerToken(hex, platform: "macos") } catch {}
     }
 
     func markMatchRead(matchID: Int64?) async {
         guard let matchID, token != nil else { return }
-        do {
-            try await accountabilityRepository.markMatchRead(matchId: matchID)
-        } catch {
+        do { try await accountabilityRepository.markMatchRead(matchId: matchID) } catch {
             handleAuthenticatedRequestError(error)
         }
     }
 
-    private func applyDashboardUpdate(_ dashboardValue: AccountabilityDashboard) {
-        dashboard = dashboardValue
-        if let matchID = dashboardValue.match?.id {
-            liveMessagesByMatch[matchID] = dashboardValue.menteeDashboard.messages
+    // MARK: - SSE Stream
+
+    private func applyDashboardUpdate(_ value: AccountabilityDashboard) {
+        dashboard = value
+        if let matchID = value.match?.id {
+            liveMessagesByMatch[matchID] = value.menteeDashboard.messages
             startStream(for: matchID)
         } else {
             stopStream()
@@ -452,14 +386,10 @@ final class HabitBackendStore: ObservableObject {
     }
 
     private func startStream(for matchID: Int64) {
-        if streamingMatchID == matchID, streamTask != nil {
-            return
-        }
+        if streamingMatchID == matchID, streamTask != nil { return }
         stopStream()
         streamingMatchID = matchID
-        streamTask = Task { [weak self] in
-            await self?.runStreamLoop(matchID: matchID)
-        }
+        streamTask = Task { [weak self] in await self?.runStreamLoop(matchID: matchID) }
     }
 
     private func stopStream() {
@@ -472,93 +402,68 @@ final class HabitBackendStore: ObservableObject {
 
     private func runStreamLoop(matchID: Int64) async {
         var hadSuccessfulConnection = false
+        var backoffSeconds: TimeInterval = 1
 
         while !Task.isCancelled, streamingMatchID == matchID, isAuthenticated {
             do {
                 streamRequestState = .loading
                 let request = try await accountabilityRepository.streamRequest(
-                    matchId: matchID,
-                    lastEventID: lastStreamEventID
+                    matchId: matchID, lastEventID: lastStreamEventID
                 )
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                     throw HabitBackendError.invalidResponse
                 }
-
-                if hadSuccessfulConnection {
-                    await refreshDashboard()
-                }
+                if hadSuccessfulConnection { await refreshDashboard() }
                 hadSuccessfulConnection = true
+                backoffSeconds = 1  // reset on successful connect
                 streamRequestState = .success(())
-
                 try await consumeSSELines(matchID: matchID, lines: bytes.lines)
             } catch {
-                if Task.isCancelled {
-                    return
-                }
+                if Task.isCancelled { return }
                 streamRequestState = .failure(error.localizedDescription)
-                try? await Task.sleep(for: .seconds(1))
+                // Exponential backoff for stream reconnects (cap at 30s)
+                try? await Task.sleep(for: .seconds(backoffSeconds))
+                backoffSeconds = min(backoffSeconds * 2, 30)
             }
         }
     }
 
-    private func consumeSSELines<S: AsyncSequence>(
-        matchID: Int64,
-        lines: S
-    ) async throws where S.Element == String {
-        var currentEventName = "message"
-        var currentEventID: String?
-        var currentDataLines: [String] = []
+    private func consumeSSELines<S: AsyncSequence>(matchID: Int64, lines: S) async throws where S.Element == String {
+        var eventName = "message"
+        var eventID: String?
+        var dataLines: [String] = []
 
-        for try await rawLine in lines {
-            if Task.isCancelled || streamingMatchID != matchID {
-                return
-            }
-
-            if rawLine.isEmpty {
-                let payload = currentDataLines.joined(separator: "\n")
+        for try await raw in lines {
+            if Task.isCancelled || streamingMatchID != matchID { return }
+            if raw.isEmpty {
+                let payload = dataLines.joined(separator: "\n")
                 if !payload.isEmpty {
-                    handleStreamEvent(
-                        matchID: matchID,
-                        eventName: currentEventName,
-                        eventID: currentEventID,
-                        payload: payload
-                    )
+                    handleStreamEvent(matchID: matchID, eventName: eventName, eventID: eventID, payload: payload)
                 }
-                currentEventName = "message"
-                currentEventID = nil
-                currentDataLines.removeAll(keepingCapacity: true)
+                eventName = "message"; eventID = nil; dataLines.removeAll(keepingCapacity: true)
                 continue
             }
-
-            if rawLine.hasPrefix("event:") {
-                currentEventName = rawLine.dropFirst(6).trimmingCharacters(in: .whitespaces)
-                continue
-            }
-
-            if rawLine.hasPrefix("id:") {
-                currentEventID = rawLine.dropFirst(3).trimmingCharacters(in: .whitespaces)
-                continue
-            }
-
-            if rawLine.hasPrefix("data:") {
-                currentDataLines.append(String(rawLine.dropFirst(5)).trimmingCharacters(in: .whitespaces))
-            }
+            if raw.hasPrefix("event:") { eventName = raw.dropFirst(6).trimmingCharacters(in: .whitespaces); continue }
+            if raw.hasPrefix("id:")    { eventID   = raw.dropFirst(3).trimmingCharacters(in: .whitespaces); continue }
+            if raw.hasPrefix("data:")  { dataLines.append(String(raw.dropFirst(5)).trimmingCharacters(in: .whitespaces)) }
         }
     }
 
     private func handleStreamEvent(matchID: Int64, eventName: String, eventID: String?, payload: String) {
-        if let eventID, !eventID.isEmpty {
-            lastStreamEventID = eventID
-        }
-
+        if let id = eventID, !id.isEmpty { lastStreamEventID = id }
         switch eventName {
         case "message.created":
-            guard let data = payload.data(using: .utf8) else { return }
-            guard let message = try? JSONDecoder().decode(AccountabilityDashboard.Message.self, from: data) else { return }
-            appendMessage(message, to: matchID)
+            guard
+                let data = payload.data(using: .utf8),
+                let msg = try? JSONDecoder().decode(AccountabilityDashboard.Message.self, from: data)
+            else { return }
+            appendMessage(msg, to: matchID)
+            // Arriving messages make the cached dashboard stale
+            Task { await responseCache.invalidateDashboard() }
         case "match.updated":
             Task { [weak self] in
+                await self?.responseCache.invalidateDashboard()
                 await self?.refreshDashboard()
             }
         case "message.read":
@@ -571,24 +476,21 @@ final class HabitBackendStore: ObservableObject {
     }
 
     private func appendMessage(_ message: AccountabilityDashboard.Message, to matchID: Int64) {
-        var messages = liveMessagesByMatch[matchID] ?? []
-        guard !messages.contains(where: { $0.id == message.id }) else { return }
-        messages.insert(message, at: 0)
-        if messages.count > 60 {
-            messages = Array(messages.prefix(60))
-        }
-        liveMessagesByMatch[matchID] = messages
+        var msgs = liveMessagesByMatch[matchID] ?? []
+        guard !msgs.contains(where: { $0.id == message.id }) else { return }
+        msgs.insert(message, at: 0)
+        if msgs.count > 60 { msgs = Array(msgs.prefix(60)) }
+        liveMessagesByMatch[matchID] = msgs
     }
+
+    // MARK: - Error handling
 
     private func handleAuthenticatedRequestError(_ error: Error) {
         if case HabitBackendError.notAuthenticated = error {
             clearSession(errorMessage: error.localizedDescription)
-            Task {
-                await apiClient.clearSession()
-            }
+            Task { await apiClient.clearSession() }
             return
         }
-
         errorMessage = error.localizedDescription
     }
 
@@ -605,6 +507,8 @@ final class HabitBackendStore: ObservableObject {
             || streamRequestState.isLoading
     }
 
+    // MARK: - Session persistence
+
     private func applySession(_ session: BackendSession) {
         token = session.accessToken
         Self.saveSession(session, key: sessionKey)
@@ -618,22 +522,15 @@ final class HabitBackendStore: ObservableObject {
 
     private func clearSession(errorMessage: String? = nil) {
         stopStream()
-        token = nil
-        dashboard = nil
-        liveMessagesByMatch = [:]
-        statusMessage = nil
-        self.errorMessage = errorMessage
+        token = nil; dashboard = nil; liveMessagesByMatch = [:]
+        statusMessage = nil; self.errorMessage = errorMessage
         Self.saveSession(nil, key: sessionKey)
         UserDefaults.standard.removeObject(forKey: "habitTracker.localhost.token")
-        authRequestState = .idle
-        habitListRequestState = .idle
-        dashboardRequestState = .idle
-        createHabitRequestState = .idle
-        checkUpdateRequestState = .idle
-        deleteHabitRequestState = .idle
-        mentorRequestState = .idle
-        messageRequestState = .idle
-        friendRequestState = .idle
+        authRequestState = .idle; habitListRequestState = .idle; dashboardRequestState = .idle
+        createHabitRequestState = .idle; checkUpdateRequestState = .idle
+        deleteHabitRequestState = .idle; mentorRequestState = .idle
+        messageRequestState = .idle; friendRequestState = .idle
+        Task { await responseCache.invalidateAll() }
         refreshSyncingState()
     }
 
@@ -649,14 +546,10 @@ final class HabitBackendStore: ObservableObject {
         if
             let data = UserDefaults.standard.data(forKey: key),
             let session = try? JSONDecoder().decode(BackendSession.self, from: data)
-        {
-            return session
+        { return session }
+        if let legacy = UserDefaults.standard.string(forKey: "habitTracker.localhost.token") {
+            return BackendSession.fromLegacyToken(legacy)
         }
-
-        if let legacyToken = UserDefaults.standard.string(forKey: "habitTracker.localhost.token") {
-            return BackendSession.fromLegacyToken(legacyToken)
-        }
-
         return nil
     }
 }

@@ -7,15 +7,28 @@ struct HabitTrackerMacosApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Habit.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let schema = Schema([Habit.self])
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        // First try a normal open; SwiftData handles lightweight migrations automatically.
+        if let container = try? ModelContainer(for: schema, configurations: [config]) {
+            return container
+        }
+
+        // Migration failed (schema changed incompatibly). Delete the store and start fresh.
+        // This only happens during development when the model changes without a migration plan.
+        let storeURL = config.url
+        let fm = FileManager.default
+        for url in [storeURL,
+                    storeURL.appendingPathExtension("shm"),
+                    storeURL.appendingPathExtension("wal")] {
+            try? fm.removeItem(at: url)
+        }
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(for: schema, configurations: [config])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            fatalError("Could not create ModelContainer even after store reset: \(error)")
         }
     }()
 

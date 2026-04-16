@@ -15,16 +15,9 @@ struct ContentView: View {
     @State private var mentorNudge: String? = nil
 
     private static let nudgeMessages = [
-        "Well done! 💪",
-        "Keep it up!",
-        "That's the way!",
-        "Proud of you!",
-        "One step closer!",
-        "You're crushing it!",
-        "Consistency wins!",
-        "Nice work! 🎉",
-        "That's a win!",
-        "Stay the course!",
+        "Well done! 💪", "Keep it up!", "That's the way!", "Proud of you!",
+        "One step closer!", "You're crushing it!", "Consistency wins!",
+        "Nice work! 🎉", "That's a win!", "Stay the course!",
     ]
 
     private var todayKey: String { DateKey.key(for: Date()) }
@@ -72,17 +65,17 @@ struct ContentView: View {
             guard backend.isAuthenticated else { return }
             syncWithBackend()
         }
-        // Register APNs device token with the backend when received from AppDelegate.
         .onReceive(NotificationCenter.default.publisher(for: .apnsTokenReceived)) { note in
             guard let token = note.object as? Data else { return }
             Task { await backend.registerDeviceToken(token) }
         }
-        // Show in-app nudge banner when a remote notification arrives while the app is open.
         .onReceive(NotificationCenter.default.publisher(for: .apnsNudgeReceived)) { note in
             guard let message = note.object as? String else { return }
             mentorNudge = message
         }
     }
+
+    // MARK: - Add habit
 
     private func addHabit() {
         let title = newHabitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -93,96 +86,116 @@ struct ContentView: View {
             return
         }
 
+        // Optimistic local insert with .pending status
+        let localHabit = Habit(title: title, syncStatus: .pending)
+        withAnimation { modelContext.insert(localHabit) }
+        newHabitTitle = ""
+
         Task {
             do {
                 let remoteHabit = try await backend.createHabit(title: title)
-                await MainActor.run {
-                    withAnimation {
-                        upsert(remoteHabit)
-                        newHabitTitle = ""
-                    }
-                    backend.statusMessage = "Habit synced"
-                    backend.errorMessage = nil
-                }
+                localHabit.backendId  = remoteHabit.id
+                localHabit.syncStatus = .synced
+                localHabit.updatedAt  = Date()
+                backend.statusMessage = "Habit synced"
+                backend.errorMessage  = nil
                 await backend.refreshDashboard()
             } catch {
-                await MainActor.run {
-                    backend.errorMessage = error.localizedDescription
-                }
+                localHabit.syncStatus = .failed
+                backend.errorMessage  = error.localizedDescription
             }
         }
     }
+
+    // MARK: - Full sync (outbox flush → pull → reconcile)
 
     private func syncWithBackend() {
         guard backend.isAuthenticated else { return }
 
         Task {
             do {
-                try await uploadUnsyncedLocalHabits()
-                let remoteHabits = try await backend.listHabits()
-                await MainActor.run {
-                    merge(remoteHabits)
-                    backend.statusMessage = "Synced with localhost:8080"
-                    backend.errorMessage = nil
-                }
+                try await flushOutbox()
+                let remote = try await backend.listHabits()
+                applyReconcile(SyncEngine.reconcile(local: habits, remote: remote))
+                backend.statusMessage = "Synced with localhost:8080"
+                backend.errorMessage  = nil
                 await backend.refreshDashboard()
             } catch {
-                await MainActor.run {
-                    backend.errorMessage = error.localizedDescription
+                backend.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// Upload all local habits not yet confirmed by the server.
+    /// Server-wins: once a backendId is assigned the pull will overwrite local values.
+    private func flushOutbox() async throws {
+        // 1. Create habits that have never been uploaded
+        for habit in SyncEngine.pendingCreates(in: habits) {
+            habit.syncStatus = .pending
+            do {
+                let remote = try await backend.createHabit(title: habit.title)
+                habit.backendId  = remote.id
+                // Upload any pre-existing checks for this habit
+                for dayKey in habit.completedDayKeys {
+                    try await backend.setCheck(habitID: remote.id, dateKey: dayKey, done: true)
                 }
+                habit.syncStatus = .synced
+                habit.updatedAt  = Date()
+            } catch {
+                habit.syncStatus = .failed
+                throw error
+            }
+        }
+
+        // 2. Retry failed habits that already have a backendId (re-push all checks)
+        for habit in SyncEngine.failedUploads(in: habits) {
+            guard let bid = habit.backendId else { continue }
+            do {
+                for dayKey in habit.completedDayKeys {
+                    try await backend.setCheck(habitID: bid, dateKey: dayKey, done: true)
+                }
+                habit.syncStatus = .synced
+                habit.updatedAt  = Date()
+            } catch {
+                // Leave as .failed — the badge will invite the user to retry manually
             }
         }
     }
 
-    private func uploadUnsyncedLocalHabits() async throws {
-        let unsynced = habits.filter { $0.backendId == nil }
-        for habit in unsynced {
-            let remoteHabit = try await backend.createHabit(title: habit.title)
-            habit.backendId = remoteHabit.id
-
-            for dayKey in habit.completedDayKeys {
-                try await backend.setCheck(habitID: remoteHabit.id, dateKey: dayKey, done: true)
-            }
+    /// Apply a `ReconcileResult` to SwiftData. Conflict policy: server-wins.
+    private func applyReconcile(_ result: SyncEngine.ReconcileResult) {
+        for (local, remote) in result.toUpdate {
+            // Only overwrite if the local record is synced (not a pending local edit)
+            guard local.syncStatus == .synced || local.syncStatus == .failed else { continue }
+            local.title             = remote.title
+            local.completedDayKeys  = remote.completedDayKeys
+            local.syncStatus        = .synced
+            local.updatedAt         = Date()
         }
-    }
-
-    private func merge(_ remoteHabits: [BackendHabit]) {
-        let remoteIDs = Set(remoteHabits.map(\.id))
-
-        for remoteHabit in remoteHabits {
-            upsert(remoteHabit)
+        for remote in result.toInsert {
+            modelContext.insert(Habit(
+                title: remote.title,
+                completedDayKeys: remote.completedDayKeys,
+                backendId: remote.id,
+                syncStatus: .synced
+            ))
         }
-
-        for habit in habits {
-            guard let backendId = habit.backendId, !remoteIDs.contains(backendId) else { continue }
+        for habit in result.toDelete {
             modelContext.delete(habit)
         }
     }
 
-    private func upsert(_ remoteHabit: BackendHabit) {
-        if let existing = habits.first(where: { $0.backendId == remoteHabit.id }) {
-            existing.title = remoteHabit.title
-            existing.completedDayKeys = remoteHabit.completedDayKeys
-        } else {
-            modelContext.insert(Habit(
-                title: remoteHabit.title,
-                completedDayKeys: remoteHabit.completedDayKeys,
-                backendId: remoteHabit.id
-            ))
-        }
-    }
+    // MARK: - Toggle habit
 
     private func toggleHabit(_ habit: Habit) {
         var keys = habit.completedDayKeys
         let wasUnchecked = !keys.contains(todayKey)
-        if let index = keys.firstIndex(of: todayKey) {
-            keys.remove(at: index)
-        } else {
-            keys.append(todayKey)
-        }
+        if let i = keys.firstIndex(of: todayKey) { keys.remove(at: i) } else { keys.append(todayKey) }
 
         withAnimation(.snappy(duration: 0.2)) {
             habit.completedDayKeys = keys.sorted()
+            habit.updatedAt  = Date()
+            habit.syncStatus = habit.backendId != nil ? .pending : habit.syncStatus
         }
 
         if wasUnchecked && showMentorCharacter {
@@ -191,45 +204,35 @@ struct ContentView: View {
 
         if wasUnchecked && habits.count > 1 {
             let doneAfter = habits.filter { h in
-                if h.id == habit.id {
-                    return keys.contains(todayKey)
-                }
-                return h.completedDayKeys.contains(todayKey)
+                h.id == habit.id ? keys.contains(todayKey) : h.completedDayKeys.contains(todayKey)
             }.count
-            if doneAfter == habits.count {
-                triggerCelebration()
-            }
+            if doneAfter == habits.count { triggerCelebration() }
         }
 
         guard let backendId = habit.backendId, backend.isAuthenticated else { return }
         Task {
             do {
                 try await backend.setCheck(habitID: backendId, dateKey: todayKey, done: wasUnchecked)
+                habit.syncStatus = .synced
                 await backend.refreshDashboard()
             } catch {
-                await MainActor.run {
-                    backend.errorMessage = error.localizedDescription
-                }
+                habit.syncStatus = .failed
+                backend.errorMessage = error.localizedDescription
             }
         }
     }
 
-    private func triggerCelebration() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            showCelebration = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(.easeOut(duration: 0.5)) {
-                showCelebration = false
-            }
-        }
-    }
+    // MARK: - Delete habit
 
     private func deleteHabit(_ habit: Habit) {
         let backendId = habit.backendId
-        withAnimation {
-            modelContext.delete(habit)
+
+        // Mark for deletion first; actual SwiftData removal happens after server confirms
+        if backendId != nil && backend.isAuthenticated {
+            habit.syncStatus = .deleted
         }
+
+        withAnimation { modelContext.delete(habit) }
 
         guard let backendId, backend.isAuthenticated else { return }
         Task {
@@ -237,17 +240,22 @@ struct ContentView: View {
                 try await backend.deleteHabit(habitID: backendId)
                 await backend.refreshDashboard()
             } catch {
-                await MainActor.run {
-                    backend.errorMessage = error.localizedDescription
-                }
+                backend.errorMessage = error.localizedDescription
             }
         }
     }
 
-    private func assignMentor() {
-        Task {
-            await backend.assignMentor()
+    // MARK: - Helpers
+
+    private func triggerCelebration() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { showCelebration = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation(.easeOut(duration: 0.5)) { showCelebration = false }
         }
+    }
+
+    private func assignMentor() {
+        Task { await backend.assignMentor() }
     }
 }
 

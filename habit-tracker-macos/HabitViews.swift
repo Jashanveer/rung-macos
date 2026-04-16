@@ -214,6 +214,9 @@ struct HabitCard: View {
 
             Spacer(minLength: 4)
 
+            // Sync status badge — shown when a write is pending or failed
+            SyncStatusBadge(status: habit.syncStatus)
+
             Button(role: .destructive) {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                     onDelete(habit)
@@ -243,6 +246,38 @@ struct HabitCard: View {
         .scaleEffect(isHovered ? 1.008 : 1)
         .animation(.smooth(duration: 0.15), value: isHovered)
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Sync status badge
+
+/// Compact indicator shown on a HabitCard when the local record diverges from the server.
+/// Hidden entirely when synced so it consumes no layout space.
+private struct SyncStatusBadge: View {
+    let status: SyncStatus
+    @State private var spinning = false
+
+    var body: some View {
+        Group {
+            switch status {
+            case .synced, .deleted:
+                Color.clear.frame(width: 0, height: 0)
+            case .pending:
+                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.orange.opacity(0.8))
+                    .rotationEffect(.degrees(spinning ? 360 : 0))
+                    .animation(.linear(duration: 1.2).repeatForever(autoreverses: false), value: spinning)
+                    .onAppear { spinning = true }
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.red.opacity(0.85))
+                    .help("Sync failed — will retry on next sync")
+            }
+        }
+        .transition(.scale.combined(with: .opacity))
+        .animation(.smooth(duration: 0.2), value: status)
     }
 }
 
