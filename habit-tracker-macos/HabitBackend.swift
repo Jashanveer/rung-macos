@@ -179,364 +179,484 @@ final class HabitBackendStore: ObservableObject {
     @Published var isSyncing = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
+    @Published private(set) var authRequestState: RequestState<Void> = .idle
+    @Published private(set) var habitListRequestState: RequestState<[BackendHabit]> = .idle
+    @Published private(set) var dashboardRequestState: RequestState<AccountabilityDashboard> = .idle
+    @Published private(set) var createHabitRequestState: RequestState<BackendHabit> = .idle
+    @Published private(set) var checkUpdateRequestState: RequestState<Void> = .idle
+    @Published private(set) var deleteHabitRequestState: RequestState<Void> = .idle
+    @Published private(set) var mentorRequestState: RequestState<Void> = .idle
+    @Published private(set) var messageRequestState: RequestState<Void> = .idle
+    @Published private(set) var friendRequestState: RequestState<Void> = .idle
+    @Published private(set) var streamRequestState: RequestState<Void> = .idle
+    @Published private(set) var liveMessagesByMatch: [Int64: [AccountabilityDashboard.Message]] = [:]
 
-    private let client = HabitBackendClient()
-    private let tokenKey = "habitTracker.localhost.token"
+    private let sessionKey = "habitTracker.localhost.session.v1"
+    private let apiClient: BackendAPIClient
+    private let authRepository: AuthRepository
+    private let habitRepository: HabitRepository
+    private let accountabilityRepository: AccountabilityRepository
+    private let deviceRepository: DeviceRepository
+    private var streamTask: Task<Void, Never>?
+    private var streamingMatchID: Int64?
+    private var lastStreamEventID: String?
 
     var isAuthenticated: Bool {
         token != nil
     }
 
     init() {
-        token = UserDefaults.standard.string(forKey: tokenKey)
+        let session = Self.loadSession(from: sessionKey)
+        token = session?.accessToken
+
+        let client = BackendAPIClient(initialSession: session)
+        apiClient = client
+        authRepository = AuthRepository(client: client)
+        habitRepository = HabitRepository(client: client)
+        accountabilityRepository = AccountabilityRepository(client: client)
+        deviceRepository = DeviceRepository(client: client)
+    }
+
+    func messages(matchID: Int64?) -> [AccountabilityDashboard.Message] {
+        guard let matchID else { return dashboard?.menteeDashboard.messages ?? [] }
+        return liveMessagesByMatch[matchID] ?? dashboard?.menteeDashboard.messages ?? []
     }
 
     func signIn(username: String, password: String) async {
-        await authenticate(username: username, email: nil, password: password, avatarURL: nil, mode: .login)
+        authRequestState = .loading
+        refreshSyncingState()
+
+        do {
+            let session = try await authRepository.signIn(username: username, password: password)
+            applySession(session)
+            statusMessage = "Connected to localhost:8080"
+            errorMessage = nil
+            authRequestState = .success(())
+        } catch {
+            errorMessage = error.localizedDescription
+            authRequestState = .failure(error.localizedDescription)
+        }
+
+        refreshSyncingState()
     }
 
     func register(username: String, email: String, password: String, avatarURL: String) async {
-        await authenticate(username: username, email: email, password: password, avatarURL: avatarURL, mode: .register)
+        authRequestState = .loading
+        refreshSyncingState()
+
+        do {
+            let session = try await authRepository.register(
+                username: username,
+                email: email,
+                password: password,
+                avatarURL: avatarURL
+            )
+            applySession(session)
+            statusMessage = "Connected to localhost:8080"
+            errorMessage = nil
+            authRequestState = .success(())
+        } catch {
+            errorMessage = error.localizedDescription
+            authRequestState = .failure(error.localizedDescription)
+        }
+
+        refreshSyncingState()
     }
 
     func signOut() {
+        stopStream()
         clearSession()
+        Task {
+            await apiClient.clearSession()
+        }
     }
 
     func listHabits() async throws -> [BackendHabit] {
+        habitListRequestState = .loading
+        refreshSyncingState()
+
         do {
-            return try await client.listHabits(token: requireToken())
+            let habits = try await habitRepository.listHabits()
+            await syncSessionFromClient()
+            habitListRequestState = .success(habits)
+            errorMessage = nil
+            refreshSyncingState()
+            return habits
         } catch {
             handleAuthenticatedRequestError(error)
+            habitListRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
             throw error
         }
     }
 
     func createHabit(title: String) async throws -> BackendHabit {
+        createHabitRequestState = .loading
+        refreshSyncingState()
+
         do {
-            return try await client.createHabit(title: title, token: requireToken())
+            let habit = try await habitRepository.createHabit(title: title)
+            await syncSessionFromClient()
+            createHabitRequestState = .success(habit)
+            errorMessage = nil
+            refreshSyncingState()
+            return habit
         } catch {
             handleAuthenticatedRequestError(error)
+            createHabitRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
             throw error
         }
     }
 
     func setCheck(habitID: Int64, dateKey: String, done: Bool) async throws {
+        checkUpdateRequestState = .loading
+        refreshSyncingState()
+
         do {
-            _ = try await client.setCheck(habitID: habitID, dateKey: dateKey, done: done, token: requireToken())
+            _ = try await habitRepository.setCheck(habitID: habitID, dateKey: dateKey, done: done)
+            await syncSessionFromClient()
+            checkUpdateRequestState = .success(())
+            errorMessage = nil
+            refreshSyncingState()
         } catch {
             handleAuthenticatedRequestError(error)
+            checkUpdateRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
             throw error
         }
     }
 
     func deleteHabit(habitID: Int64) async throws {
+        deleteHabitRequestState = .loading
+        refreshSyncingState()
+
         do {
-            try await client.deleteHabit(habitID: habitID, token: requireToken())
+            try await habitRepository.deleteHabit(habitID: habitID)
+            await syncSessionFromClient()
+            deleteHabitRequestState = .success(())
+            errorMessage = nil
+            refreshSyncingState()
         } catch {
             handleAuthenticatedRequestError(error)
+            deleteHabitRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
             throw error
         }
     }
 
     func refreshDashboard() async {
-        guard let token else { return }
+        guard token != nil else { return }
+        dashboardRequestState = .loading
+        refreshSyncingState()
 
         do {
-            dashboard = try await client.dashboard(token: token)
+            let dashboardValue = try await accountabilityRepository.dashboard()
+            await syncSessionFromClient()
+            applyDashboardUpdate(dashboardValue)
+            dashboardRequestState = .success(dashboardValue)
+            errorMessage = nil
         } catch {
             handleAuthenticatedRequestError(error)
+            dashboardRequestState = .failure(error.localizedDescription)
         }
+
+        refreshSyncingState()
     }
 
     func assignMentor() async {
-        guard let token else { return }
-
-        isSyncing = true
-        defer { isSyncing = false }
+        guard token != nil else { return }
+        mentorRequestState = .loading
+        refreshSyncingState()
 
         do {
-            dashboard = try await client.assignMentor(token: token)
+            let dashboardValue = try await accountabilityRepository.assignMentor()
+            await syncSessionFromClient()
+            applyDashboardUpdate(dashboardValue)
             statusMessage = "Mentor match updated"
             errorMessage = nil
+            mentorRequestState = .success(())
         } catch {
             handleAuthenticatedRequestError(error)
+            mentorRequestState = .failure(error.localizedDescription)
         }
+
+        refreshSyncingState()
     }
 
     func sendMenteeMessage(matchId: Int64, message: String) async {
-        guard let token else { return }
+        guard token != nil else { return }
+        messageRequestState = .loading
+        refreshSyncingState()
+
         do {
-            dashboard = try await client.sendMenteeMessage(matchId: matchId, message: message, token: token)
+            let dashboardValue = try await accountabilityRepository.sendMenteeMessage(matchId: matchId, message: message)
+            await syncSessionFromClient()
+            applyDashboardUpdate(dashboardValue)
+            messageRequestState = .success(())
+            errorMessage = nil
         } catch {
             handleAuthenticatedRequestError(error)
+            messageRequestState = .failure(error.localizedDescription)
         }
+
+        refreshSyncingState()
     }
 
     func requestFriend(userID: Int64) async {
-        guard let token else { return }
-
-        isSyncing = true
-        defer { isSyncing = false }
+        guard token != nil else { return }
+        friendRequestState = .loading
+        refreshSyncingState()
 
         do {
-            dashboard = try await client.requestFriend(friendUserID: userID, token: token)
+            let dashboardValue = try await accountabilityRepository.requestFriend(friendUserID: userID)
+            await syncSessionFromClient()
+            applyDashboardUpdate(dashboardValue)
             statusMessage = "Friend added"
             errorMessage = nil
+            friendRequestState = .success(())
+        } catch {
+            handleAuthenticatedRequestError(error)
+            friendRequestState = .failure(error.localizedDescription)
+        }
+        refreshSyncingState()
+    }
+
+    func registerDeviceToken(_ token: Data) async {
+        guard isAuthenticated else { return }
+        let hexToken = token.map { String(format: "%02.2hhx", $0) }.joined()
+        do {
+            try await deviceRepository.registerToken(hexToken, platform: "macos")
+        } catch {
+            // Non-critical — app still works via SSE
+        }
+    }
+
+    func markMatchRead(matchID: Int64?) async {
+        guard let matchID, token != nil else { return }
+        do {
+            try await accountabilityRepository.markMatchRead(matchId: matchID)
         } catch {
             handleAuthenticatedRequestError(error)
         }
     }
 
-    private enum AuthMode {
-        case login
-        case register
+    private func applyDashboardUpdate(_ dashboardValue: AccountabilityDashboard) {
+        dashboard = dashboardValue
+        if let matchID = dashboardValue.match?.id {
+            liveMessagesByMatch[matchID] = dashboardValue.menteeDashboard.messages
+            startStream(for: matchID)
+        } else {
+            stopStream()
+        }
     }
 
-    private func authenticate(username: String, email: String?, password: String, avatarURL: String?, mode: AuthMode) async {
-        isSyncing = true
-        defer { isSyncing = false }
+    private func startStream(for matchID: Int64) {
+        if streamingMatchID == matchID, streamTask != nil {
+            return
+        }
+        stopStream()
+        streamingMatchID = matchID
+        streamTask = Task { [weak self] in
+            await self?.runStreamLoop(matchID: matchID)
+        }
+    }
 
-        do {
-            let issuedToken: String
-            switch mode {
-            case .login:
-                issuedToken = try await client.login(username: username, password: password)
-            case .register:
-                issuedToken = try await client.register(
-                    username: username,
-                    email: email ?? "",
-                    password: password,
-                    avatarURL: avatarURL ?? ""
+    private func stopStream() {
+        streamTask?.cancel()
+        streamTask = nil
+        streamingMatchID = nil
+        lastStreamEventID = nil
+        streamRequestState = .idle
+    }
+
+    private func runStreamLoop(matchID: Int64) async {
+        var hadSuccessfulConnection = false
+
+        while !Task.isCancelled, streamingMatchID == matchID, isAuthenticated {
+            do {
+                streamRequestState = .loading
+                let request = try await accountabilityRepository.streamRequest(
+                    matchId: matchID,
+                    lastEventID: lastStreamEventID
                 )
+                let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw HabitBackendError.invalidResponse
+                }
+
+                if hadSuccessfulConnection {
+                    await refreshDashboard()
+                }
+                hadSuccessfulConnection = true
+                streamRequestState = .success(())
+
+                try await consumeSSELines(matchID: matchID, lines: bytes.lines)
+            } catch {
+                if Task.isCancelled {
+                    return
+                }
+                streamRequestState = .failure(error.localizedDescription)
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    private func consumeSSELines<S: AsyncSequence>(
+        matchID: Int64,
+        lines: S
+    ) async throws where S.Element == String {
+        var currentEventName = "message"
+        var currentEventID: String?
+        var currentDataLines: [String] = []
+
+        for try await rawLine in lines {
+            if Task.isCancelled || streamingMatchID != matchID {
+                return
             }
 
-            token = issuedToken
-            UserDefaults.standard.set(issuedToken, forKey: tokenKey)
-            statusMessage = "Connected to localhost:8080"
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+            if rawLine.isEmpty {
+                let payload = currentDataLines.joined(separator: "\n")
+                if !payload.isEmpty {
+                    handleStreamEvent(
+                        matchID: matchID,
+                        eventName: currentEventName,
+                        eventID: currentEventID,
+                        payload: payload
+                    )
+                }
+                currentEventName = "message"
+                currentEventID = nil
+                currentDataLines.removeAll(keepingCapacity: true)
+                continue
+            }
+
+            if rawLine.hasPrefix("event:") {
+                currentEventName = rawLine.dropFirst(6).trimmingCharacters(in: .whitespaces)
+                continue
+            }
+
+            if rawLine.hasPrefix("id:") {
+                currentEventID = rawLine.dropFirst(3).trimmingCharacters(in: .whitespaces)
+                continue
+            }
+
+            if rawLine.hasPrefix("data:") {
+                currentDataLines.append(String(rawLine.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            }
         }
     }
 
-    private func requireToken() throws -> String {
-        guard let token else {
-            throw HabitBackendError.notAuthenticated
+    private func handleStreamEvent(matchID: Int64, eventName: String, eventID: String?, payload: String) {
+        if let eventID, !eventID.isEmpty {
+            lastStreamEventID = eventID
         }
-        return token
+
+        switch eventName {
+        case "message.created":
+            guard let data = payload.data(using: .utf8) else { return }
+            guard let message = try? JSONDecoder().decode(AccountabilityDashboard.Message.self, from: data) else { return }
+            appendMessage(message, to: matchID)
+        case "match.updated":
+            Task { [weak self] in
+                await self?.refreshDashboard()
+            }
+        case "message.read":
+            _ = payload.data(using: .utf8).flatMap { try? JSONDecoder().decode(MatchStreamMessageReadEvent.self, from: $0) }
+        case "ping", "stream.ready":
+            break
+        default:
+            break
+        }
+    }
+
+    private func appendMessage(_ message: AccountabilityDashboard.Message, to matchID: Int64) {
+        var messages = liveMessagesByMatch[matchID] ?? []
+        guard !messages.contains(where: { $0.id == message.id }) else { return }
+        messages.insert(message, at: 0)
+        if messages.count > 60 {
+            messages = Array(messages.prefix(60))
+        }
+        liveMessagesByMatch[matchID] = messages
     }
 
     private func handleAuthenticatedRequestError(_ error: Error) {
         if case HabitBackendError.notAuthenticated = error {
             clearSession(errorMessage: error.localizedDescription)
+            Task {
+                await apiClient.clearSession()
+            }
             return
         }
 
         errorMessage = error.localizedDescription
     }
 
+    private func refreshSyncingState() {
+        isSyncing = authRequestState.isLoading
+            || habitListRequestState.isLoading
+            || dashboardRequestState.isLoading
+            || createHabitRequestState.isLoading
+            || checkUpdateRequestState.isLoading
+            || deleteHabitRequestState.isLoading
+            || mentorRequestState.isLoading
+            || messageRequestState.isLoading
+            || friendRequestState.isLoading
+            || streamRequestState.isLoading
+    }
+
+    private func applySession(_ session: BackendSession) {
+        token = session.accessToken
+        Self.saveSession(session, key: sessionKey)
+    }
+
+    private func syncSessionFromClient() async {
+        let session = await apiClient.currentSession()
+        token = session?.accessToken
+        Self.saveSession(session, key: sessionKey)
+    }
+
     private func clearSession(errorMessage: String? = nil) {
+        stopStream()
         token = nil
         dashboard = nil
+        liveMessagesByMatch = [:]
         statusMessage = nil
         self.errorMessage = errorMessage
-        UserDefaults.standard.removeObject(forKey: tokenKey)
-    }
-}
-
-private struct HabitBackendClient {
-    private let baseURL = URL(string: "http://127.0.0.1:8080")!
-    private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
-
-    func login(username: String, password: String) async throws -> String {
-        let response: AuthResponse = try await request(
-            path: "/api/auth/login",
-            method: "POST",
-            body: LoginRequest(username: username, password: password)
-        )
-        return response.token
+        Self.saveSession(nil, key: sessionKey)
+        UserDefaults.standard.removeObject(forKey: "habitTracker.localhost.token")
+        authRequestState = .idle
+        habitListRequestState = .idle
+        dashboardRequestState = .idle
+        createHabitRequestState = .idle
+        checkUpdateRequestState = .idle
+        deleteHabitRequestState = .idle
+        mentorRequestState = .idle
+        messageRequestState = .idle
+        friendRequestState = .idle
+        refreshSyncingState()
     }
 
-    func register(username: String, email: String, password: String, avatarURL: String) async throws -> String {
-        let response: AuthResponse = try await request(
-            path: "/api/auth/register",
-            method: "POST",
-            body: RegisterRequest(username: username, email: email, password: password, avatarUrl: avatarURL)
-        )
-        return response.token
-    }
-
-    func listHabits(token: String) async throws -> [BackendHabit] {
-        try await request(path: "/api/habits", method: "GET", token: token)
-    }
-
-    func createHabit(title: String, token: String) async throws -> BackendHabit {
-        try await request(
-            path: "/api/habits",
-            method: "POST",
-            token: token,
-            body: HabitCreateRequest(title: title)
-        )
-    }
-
-    func setCheck(habitID: Int64, dateKey: String, done: Bool, token: String) async throws -> BackendHabit {
-        try await request(
-            path: "/api/habits/\(habitID)/checks/\(dateKey)",
-            method: "PUT",
-            token: token,
-            body: CheckUpdateRequest(done: done)
-        )
-    }
-
-    func deleteHabit(habitID: Int64, token: String) async throws {
-        let _: EmptyResponse = try await request(
-            path: "/api/habits/\(habitID)",
-            method: "DELETE",
-            token: token
-        )
-    }
-
-    func dashboard(token: String) async throws -> AccountabilityDashboard {
-        try await request(path: "/api/accountability/dashboard", method: "GET", token: token)
-    }
-
-    func assignMentor(token: String) async throws -> AccountabilityDashboard {
-        try await request(path: "/api/accountability/match", method: "POST", token: token)
-    }
-
-    func requestFriend(friendUserID: Int64, token: String) async throws -> AccountabilityDashboard {
-        try await request(path: "/api/accountability/friends/\(friendUserID)", method: "POST", token: token)
-    }
-
-    func sendMenteeMessage(matchId: Int64, message: String, token: String) async throws -> AccountabilityDashboard {
-        try await request(
-            path: "/api/accountability/matches/\(matchId)/messages",
-            method: "POST",
-            token: token,
-            body: MentorshipMessageRequest(message: message)
-        )
-    }
-
-    private func request<Response: Decodable>(
-        path: String,
-        method: String,
-        token: String? = nil
-    ) async throws -> Response {
-        try await request(path: path, method: method, token: token, bodyData: nil)
-    }
-
-    private func request<RequestBody: Encodable, Response: Decodable>(
-        path: String,
-        method: String,
-        token: String? = nil,
-        body: RequestBody
-    ) async throws -> Response {
-        try await request(path: path, method: method, token: token, bodyData: encoder.encode(body))
-    }
-
-    private func request<Response: Decodable>(
-        path: String,
-        method: String,
-        token: String?,
-        bodyData: Data?
-    ) async throws -> Response {
-        guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
-            throw HabitBackendError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.timeoutInterval = 10
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        if let bodyData {
-            request.httpBody = bodyData
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        }
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw HabitBackendError.invalidResponse
-            }
-
-            guard (200..<300).contains(httpResponse.statusCode) else {
-                if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                    throw HabitBackendError.notAuthenticated
-                }
-
-                let message = (try? decoder.decode(ApiErrorResponse.self, from: data).message)
-                    ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
-                throw HabitBackendError.server(message)
-            }
-
-            if Response.self == EmptyResponse.self {
-                return EmptyResponse() as! Response
-            }
-
-            return try decoder.decode(Response.self, from: data)
-        } catch let error as HabitBackendError {
-            throw error
-        } catch {
-            throw HabitBackendError.network(error.localizedDescription)
+    private static func saveSession(_ session: BackendSession?, key: String) {
+        if let session, let data = try? JSONEncoder().encode(session) {
+            UserDefaults.standard.set(data, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
         }
     }
 
-    private struct LoginRequest: Encodable {
-        let username: String
-        let password: String
-    }
-
-    private struct RegisterRequest: Encodable {
-        let username: String
-        let email: String
-        let password: String
-        let avatarUrl: String
-    }
-
-    private struct AuthResponse: Decodable {
-        let token: String
-    }
-
-    private struct HabitCreateRequest: Encodable {
-        let title: String
-    }
-
-    private struct MentorshipMessageRequest: Encodable {
-        let message: String
-    }
-
-    private struct CheckUpdateRequest: Encodable {
-        let done: Bool
-    }
-
-    private struct ApiErrorResponse: Decodable {
-        let message: String
-    }
-
-    private struct EmptyResponse: Decodable {
-    }
-}
-
-private enum HabitBackendError: LocalizedError {
-    case notAuthenticated
-    case invalidResponse
-    case server(String)
-    case network(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notAuthenticated:
-            return "Session expired. Sign in again to sync with the backend."
-        case .invalidResponse:
-            return "The backend returned an invalid response."
-        case .server(let message):
-            return message
-        case .network(let message):
-            return "Could not reach localhost:8080. \(message)"
+    private static func loadSession(from key: String) -> BackendSession? {
+        if
+            let data = UserDefaults.standard.data(forKey: key),
+            let session = try? JSONDecoder().decode(BackendSession.self, from: data)
+        {
+            return session
         }
+
+        if let legacyToken = UserDefaults.standard.string(forKey: "habitTracker.localhost.token") {
+            return BackendSession.fromLegacyToken(legacyToken)
+        }
+
+        return nil
     }
 }

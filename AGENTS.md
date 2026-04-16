@@ -36,3 +36,52 @@ The current history contains only `Initial Commit`, so keep future commits short
 ## Agent-Specific Instructions
 
 Keep changes limited to the requested task. Use Xcode project tooling for builds and diagnostics when available, and do not rewrite generated project files unless the change requires it.
+
+## Integration Test Agent: `realtime-auth-validator`
+
+Use this agent when asked to verify the implemented backend/app integration work:
+- JWT refresh pipeline
+- Repository layer + per-request states
+- SSE real-time chat (`message.created`, `message.read`, `match.updated`)
+
+### Preconditions
+- Backend is running locally at `http://127.0.0.1:8080`.
+- macOS app can be launched from Xcode.
+- Two accounts are available (mentor + mentee), or can be created.
+
+### Validation Workflow
+1. Backend auth contract smoke test
+- Register/login and confirm auth response includes `accessToken`.
+- Call `POST /api/auth/refresh` and confirm a new `accessToken` is returned.
+- Confirm protected endpoint access with refreshed token.
+
+2. SSE contract smoke test
+- Open stream:
+  - `GET /api/accountability/matches/{matchId}/stream`
+  - Headers: `Authorization: Bearer <accessToken>`, optional `Last-Event-ID`.
+- Confirm stream yields heartbeat `ping` events.
+- Trigger message send via `POST /api/accountability/matches/{matchId}/messages`.
+- Confirm `message.created` arrives on active stream.
+- Confirm read acknowledgment via `POST /api/accountability/matches/{matchId}/read` emits `message.read`.
+- Confirm match lifecycle actions emit `match.updated`.
+
+3. macOS app behavior test
+- Launch two app windows/sessions (mentor and mentee).
+- Send message in window A and verify it appears in window B within ~1 second.
+- Temporarily disconnect/reconnect backend and verify stream reconnects and `refreshDashboard()` fallback runs on reconnect.
+- Verify app no longer depends on manual post-send dashboard refresh for message propagation.
+
+4. Request state verification (app layer)
+- Validate `HabitBackendStore` request states transition correctly:
+  - `authRequestState`
+  - `dashboardRequestState`
+  - `messageRequestState`
+  - `streamRequestState`
+- Validate `isSyncing` reflects any in-flight request state.
+
+### Pass Criteria
+- Refresh token flow works without forced logout.
+- SSE stays connected with heartbeats and reconnect support.
+- Chat updates are real-time across sessions (~1s target).
+- Request-state driven loading/error behavior is consistent.
+- Build passes for macOS app after validation.
