@@ -221,6 +221,7 @@ struct ProfileIdentityCard: View {
             Spacer()
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
@@ -294,6 +295,7 @@ struct LevelHeroCard: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
@@ -333,6 +335,7 @@ struct WeeklyChallengeCard: View {
             }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
@@ -733,6 +736,59 @@ private struct HabitClusterSummaryCard: View {
         clusters.filter { $0.sampleSize >= 3 && $0.timeSlot.uppercased() != "UNKNOWN" }
     }
 
+    private var summaryText: String {
+        let groupedBySlot = Dictionary(grouping: qualifiedClusters) { $0.timeSlot.uppercased() }
+        guard
+            let strongestSlot = groupedBySlot.max(by: { lhs, rhs in
+                if lhs.value.count == rhs.value.count {
+                    return slotRank(lhs.key) > slotRank(rhs.key)
+                }
+                return lhs.value.count < rhs.value.count
+            })
+        else {
+            return "Keep checking off habits to reveal when your routines naturally click."
+        }
+
+        let slotName = displayName(for: strongestSlot.key)
+        let habitNames = strongestSlot.value
+            .sorted { $0.sampleSize > $1.sampleSize }
+            .prefix(2)
+            .map(\.habitTitle)
+        let habitSummary = formattedList(Array(habitNames))
+
+        if qualifiedClusters.count == strongestSlot.value.count {
+            return "Your strongest rhythm is \(slotName.lowercased()), especially for \(habitSummary)."
+        }
+
+        return "\(slotName) is your clearest habit window, led by \(habitSummary)."
+    }
+
+    private func displayName(for timeSlot: String) -> String {
+        timeSlot.prefix(1).uppercased() + timeSlot.dropFirst().lowercased()
+    }
+
+    private func formattedList(_ items: [String]) -> String {
+        switch items.count {
+        case 0:
+            return "your tracked habits"
+        case 1:
+            return items[0]
+        default:
+            return "\(items[0]) and \(items[1])"
+        }
+    }
+
+    private func slotRank(_ timeSlot: String) -> Int {
+        switch timeSlot {
+        case "MORNING":   return 0
+        case "AFTERNOON": return 1
+        case "EVENING":   return 2
+        case "NIGHT":     return 3
+        case "MIXED":     return 4
+        default:          return 5
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             PanelTitle(systemImage: "clock.fill", title: "Your habit rhythm")
@@ -744,6 +800,11 @@ private struct HabitClusterSummaryCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 8) {
+                    Text(summaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
                     ForEach(qualifiedClusters.prefix(4)) { cluster in
                         HStack(spacing: 8) {
                             HabitClusterBadge(timeSlot: cluster.timeSlot)
@@ -759,6 +820,7 @@ private struct HabitClusterSummaryCard: View {
             }
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control

@@ -88,9 +88,10 @@ struct BackendConnectionCard: View {
                 SoftActionButton(title: "Sign out", systemImage: "rectangle.portrait.and.arrow.right", action: backend.signOut)
             }
         }
-        .padding(12)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
-            shape: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
         )
     }
@@ -156,9 +157,10 @@ struct MentorActionCard: View {
                     .opacity(buttonEnabled ? 1 : 0.55)
             }
         }
-        .padding(12)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
-            shape: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
         )
     }
@@ -219,9 +221,10 @@ struct SocialSummaryCard: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
-            shape: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
         )
     }
@@ -273,9 +276,10 @@ struct SocialFeedCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(12)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
-            shape: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
         )
     }
@@ -397,9 +401,10 @@ struct FriendSuggestionsCard: View {
                 }
             }
         }
-        .padding(12)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
-            shape: RoundedRectangle(cornerRadius: 14, style: .continuous),
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
         )
     }
