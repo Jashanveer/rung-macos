@@ -103,7 +103,7 @@ struct ContentViewScaffold: View {
                 VStack {
                     Spacer()
                     CalendarSheet(
-                        perfectDays: metrics.perfectDays,
+                        habits: habits,
                         onClose: {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                                 calendarOpen = false

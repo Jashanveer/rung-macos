@@ -1,15 +1,65 @@
 import SwiftUI
 
+enum CalendarDisplayMode: String, CaseIterable, Identifiable {
+    case activity
+    case perfectDays
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .activity:
+            return "Habit Activity"
+        case .perfectDays:
+            return "Perfect Days"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .activity:
+            return "square.grid.3x3.fill"
+        case .perfectDays:
+            return "checkmark.seal.fill"
+        }
+    }
+}
+
 struct CalendarSheet: View {
-    let perfectDays: [String]
+    @Environment(\.colorScheme) private var colorScheme
+
+    let habits: [Habit]
     let onClose: () -> Void
+    @State private var displayMode: CalendarDisplayMode = .activity
+
+    private var dailyCompletionCounts: [String: Int] {
+        var counts: [String: Int] = [:]
+        for habit in habits {
+            for dayKey in Set(habit.completedDayKeys) {
+                counts[dayKey, default: 0] += 1
+            }
+        }
+        return counts
+    }
+    private var perfectDayKeys: Set<String> {
+        guard !habits.isEmpty else { return [] }
+        return Set(
+            dailyCompletionCounts
+                .filter { $0.value == habits.count }
+                .map(\.key)
+        )
+    }
+    private var totalHabits: Int {
+        habits.count
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Perfect Days")
+                Text(displayMode.title)
                     .font(.headline)
                 Spacer()
+                CalendarModeToggle(mode: $displayMode, colorScheme: colorScheme)
                 Button {
                     onClose()
                 } label: {
@@ -22,7 +72,12 @@ struct CalendarSheet: View {
                 .buttonStyle(.plain)
             }
 
-            YearPerfectCalendar(perfectDays: perfectDays)
+            YearPerfectCalendar(
+                dailyCompletionCounts: dailyCompletionCounts,
+                perfectDayKeys: perfectDayKeys,
+                displayMode: displayMode,
+                totalHabits: totalHabits
+            )
         }
         .padding(18)
         .cleanShotSurface(
@@ -47,33 +102,67 @@ struct CalendarSheet: View {
 struct YearPerfectCalendar: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    let perfectDays: [String]
+    let dailyCompletionCounts: [String: Int]
+    let perfectDayKeys: Set<String>
+    let displayMode: CalendarDisplayMode
+    let totalHabits: Int
 
     private let columns = [GridItem(.adaptive(minimum: 122), spacing: 18)]
     private var year: Int { Calendar.current.component(.year, from: Date()) }
-    private var perfectSet: Set<String> { Set(perfectDays) }
+    private var yearCompletionCounts: [String: Int] {
+        dailyCompletionCounts.filter { $0.key.hasPrefix("\(year)-") }
+    }
+    private var legendLevels: [Int] {
+        [0, 1, 2, 3, 4]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("\(String(year)) Perfect Days")
+                Text("\(String(year)) \(displayMode.title)")
                     .font(.headline)
                     .lineLimit(1)
                 Spacer()
-                HStack(spacing: 12) {
-                    LegendDot(title: "Not perfect", color: CleanShotTheme.controlFill(for: colorScheme))
-                    LegendDot(title: "Perfect", color: CleanShotTheme.success)
+                if displayMode == .activity {
+                    HStack(spacing: 12) {
+                        ForEach(legendLevels, id: \.self) { level in
+                            LegendDot(
+                                title: level == 0 ? "None" : level == 4 ? "High" : "",
+                                color: activityColor(for: level)
+                            )
+                        }
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        LegendDot(title: "Not perfect", color: CleanShotTheme.controlFill(for: colorScheme))
+                        LegendDot(title: "Perfect", color: CleanShotTheme.success)
+                    }
                 }
             }
             .padding(.bottom, 4)
 
             LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(1...12, id: \.self) { month in
-                    MonthDots(month: month, year: year, perfectSet: perfectSet)
+                    MonthDots(
+                        month: month,
+                        year: year,
+                        dailyCompletionCounts: yearCompletionCounts,
+                        perfectDayKeys: perfectDayKeys,
+                        displayMode: displayMode,
+                        totalHabits: totalHabits
+                    )
                 }
             }
         }
         .padding(8)
+    }
+
+    private func activityColor(for level: Int) -> Color {
+        guard level > 0 else {
+            return CleanShotTheme.controlFill(for: colorScheme)
+        }
+        let opacities: [Double] = [0.26, 0.46, 0.68, 0.9]
+        return CleanShotTheme.success.opacity(opacities[max(0, min(level - 1, 3))])
     }
 }
 
@@ -82,7 +171,10 @@ struct MonthDots: View {
 
     let month: Int
     let year: Int
-    let perfectSet: Set<String>
+    let dailyCompletionCounts: [String: Int]
+    let perfectDayKeys: Set<String>
+    let displayMode: CalendarDisplayMode
+    let totalHabits: Int
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
     private let weekdays = ["M", "T", "W", "T", "F", "S", "S"]
@@ -105,13 +197,9 @@ struct MonthDots: View {
 
                 ForEach(days) { day in
                     Circle()
-                        .fill(
-                            perfectSet.contains(day.key)
-                                ? CleanShotTheme.success
-                                : CleanShotTheme.controlFill(for: colorScheme)
-                        )
+                        .fill(fillColor(for: day.key))
                         .aspectRatio(1, contentMode: .fit)
-                        .help(day.key)
+                        .help(helpText(for: day.key))
                 }
             }
         }
@@ -119,6 +207,74 @@ struct MonthDots: View {
 
     private var monthName: String {
         Calendar.current.monthSymbols[month - 1].prefix(3).description
+    }
+
+    private func fillColor(for dayKey: String) -> Color {
+        if displayMode == .perfectDays {
+            return perfectDayKeys.contains(dayKey)
+                ? CleanShotTheme.success
+                : CleanShotTheme.controlFill(for: colorScheme)
+        }
+        return activityColor(for: dayKey)
+    }
+
+    private func helpText(for dayKey: String) -> String {
+        if displayMode == .perfectDays {
+            return "\(dayKey): \(perfectDayKeys.contains(dayKey) ? "Perfect day" : "Not perfect")"
+        }
+        return "\(dayKey): \(dailyCompletionCounts[dayKey, default: 0]) habits completed"
+    }
+
+    private func activityColor(for dayKey: String) -> Color {
+        let count = dailyCompletionCounts[dayKey, default: 0]
+        guard count > 0 else {
+            return CleanShotTheme.controlFill(for: colorScheme)
+        }
+
+        let scaled = Double(count) / Double(max(totalHabits, 1))
+        switch scaled {
+        case ..<0.25:
+            return CleanShotTheme.success.opacity(0.26)
+        case ..<0.5:
+            return CleanShotTheme.success.opacity(0.46)
+        case ..<0.75:
+            return CleanShotTheme.success.opacity(0.68)
+        default:
+            return CleanShotTheme.success.opacity(0.9)
+        }
+    }
+}
+
+struct CalendarModeToggle: View {
+    @Binding var mode: CalendarDisplayMode
+    let colorScheme: ColorScheme
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(CalendarDisplayMode.allCases) { item in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        mode = item
+                    }
+                } label: {
+                    Image(systemName: item.systemImage)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(mode == item ? Color.white : .secondary)
+                        .frame(width: 20, height: 18)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(mode == item ? CleanShotTheme.success : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(item.title)
+            }
+        }
+        .padding(2)
+        .background(
+            Capsule(style: .continuous)
+                .fill(CleanShotTheme.controlFill(for: colorScheme))
+        )
     }
 }
 
@@ -132,12 +288,13 @@ struct LegendDot: View {
             Circle()
                 .fill(color)
                 .frame(width: 9, height: 9)
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            if !title.isEmpty {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
 
 // MARK: - Confetti Celebration
-
