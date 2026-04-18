@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 struct TodayHeader: View {
@@ -19,7 +20,8 @@ struct TodayHeader: View {
 
 struct AddHabitBar: View {
     @Binding var newHabitTitle: String
-    let onAddHabit: () -> Void
+    @Binding var selectedType: HabitEntryType
+    let onAddHabit: (HabitEntryType) -> Void
 
     @State private var isHovered = false
     @State private var showValidationError = false
@@ -28,13 +30,15 @@ struct AddHabitBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField("Add a new habit...", text: $newHabitTitle)
+                TextField(placeholderText, text: $newHabitTitle)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .padding(.leading, 16)
                     .focused($fieldFocused)
                     .onChange(of: newHabitTitle) { _, _ in showValidationError = false }
                     .onSubmit(attemptAdd)
+
+                HabitEntryTypeToggle(selection: $selectedType)
 
                 if !newHabitTitle.isEmpty {
                     Button(action: attemptAdd) {
@@ -60,7 +64,7 @@ struct AddHabitBar: View {
             .onHover { isHovered = $0 }
 
             if showValidationError {
-                Text("Give your habit a real name — something you'd actually say out loud.")
+                Text("Give your \(selectedType.title.lowercased()) a real name — something you'd actually say out loud.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 16)
@@ -70,13 +74,17 @@ struct AddHabitBar: View {
         .animation(.easeOut(duration: 0.2), value: showValidationError)
     }
 
+    private var placeholderText: String {
+        "Add a new \(selectedType.title.lowercased())..."
+    }
+
     private func attemptAdd() {
         guard isLikelyMeaningful(newHabitTitle) else {
             withAnimation { showValidationError = true }
             return
         }
         showValidationError = false
-        onAddHabit()
+        onAddHabit(selectedType)
     }
 
     private func isLikelyMeaningful(_ text: String) -> Bool {
@@ -118,12 +126,55 @@ struct AddHabitBar: View {
     }
 }
 
+private struct HabitEntryTypeToggle: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Binding var selection: HabitEntryType
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(HabitEntryType.allCases) { option in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selection = option
+                    }
+                } label: {
+                    Image(systemName: option.systemImage)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(selection == option ? Color.white : .secondary)
+                        .frame(width: 20, height: 18)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(selection == option ? tint(for: option) : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(option.title)
+            }
+        }
+        .padding(2)
+        .background(
+            Capsule(style: .continuous)
+                .fill(CleanShotTheme.controlFill(for: colorScheme))
+        )
+    }
+
+    private func tint(for type: HabitEntryType) -> Color {
+        switch type {
+        case .task:
+            return CleanShotTheme.accent
+        case .habit:
+            return CleanShotTheme.success
+        }
+    }
+}
+
 struct HabitListSection: View {
     let habits: [Habit]
     let todayKey: String
     let onToggle: (Habit) -> Void
     let onDelete: (Habit) -> Void
     var clusters: [AccountabilityDashboard.HabitTimeCluster] = []
+    var stampNamespace: Namespace.ID? = nil
 
     private var doneCount: Int {
         habits.filter { $0.completedDayKeys.contains(todayKey) }.count
@@ -136,7 +187,7 @@ struct HabitListSection: View {
     var body: some View {
         VStack(alignment: .center, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Today's habits")
+                Text("Today's list")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Text("\(doneCount)/\(habits.count) done")
@@ -153,7 +204,8 @@ struct HabitListSection: View {
                         todayKey: todayKey,
                         onToggle: onToggle,
                         onDelete: onDelete,
-                        cluster: cluster(for: habit)
+                        cluster: cluster(for: habit),
+                        stampNamespace: stampNamespace
                     )
                 }
             }
@@ -225,14 +277,27 @@ struct HabitCard: View {
     let onToggle: (Habit) -> Void
     let onDelete: (Habit) -> Void
     var cluster: AccountabilityDashboard.HabitTimeCluster? = nil
+    var stampNamespace: Namespace.ID? = nil
 
     @State private var isHovered = false
     @State private var showArchiveConfirm = false
 
     private var doneToday: Bool { habit.completedDayKeys.contains(todayKey) }
+    private var isHabitEntry: Bool { habit.entryType == .habit }
     private var currentStreak: Int { HabitMetrics.currentStreak(for: habit.completedDayKeys, endingAt: todayKey) }
     private var bestStreak: Int { HabitMetrics.bestStreak(for: habit.completedDayKeys) }
     private var recentDays: [DayInfo] { DateKey.recentDays(count: 7) }
+    private var completionTint: Color {
+        isHabitEntry ? CleanShotTheme.success : CleanShotTheme.accent
+    }
+    private var cardTint: Color {
+        switch habit.entryType {
+        case .task:
+            return CleanShotTheme.accent.opacity(colorScheme == .dark ? 0.10 : 0.07)
+        case .habit:
+            return CleanShotTheme.success.opacity(colorScheme == .dark ? 0.10 : 0.07)
+        }
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -243,7 +308,7 @@ struct HabitCard: View {
             } label: {
                 Image(systemName: doneToday ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22))
-                    .foregroundStyle(doneToday ? CleanShotTheme.success : .secondary.opacity(0.6))
+                    .foregroundStyle(doneToday ? completionTint : .secondary.opacity(0.6))
                     .contentTransition(.symbolEffect(.replace.downUp))
             }
             .buttonStyle(.plain)
@@ -255,26 +320,31 @@ struct HabitCard: View {
                         .strikethrough(doneToday)
                         .foregroundStyle(doneToday ? .secondary : .primary)
                         .lineLimit(1)
-                    if let cluster, cluster.sampleSize >= 3 {
+                    if isHabitEntry, let cluster, cluster.sampleSize >= 3 {
                         HabitClusterBadge(timeSlot: cluster.timeSlot)
                     }
                 }
 
                 HStack(spacing: 8) {
-                    if currentStreak > 0 {
-                        Label("\(currentStreak)d", systemImage: "flame.fill")
-                            .foregroundStyle(CleanShotTheme.warning)
-                    }
-                    if bestStreak > 0 {
-                        Label("\(bestStreak)d best", systemImage: "trophy.fill")
-                            .foregroundStyle(CleanShotTheme.gold)
+                    if isHabitEntry {
+                        if currentStreak > 0 {
+                            Label("\(currentStreak)d", systemImage: "flame.fill")
+                                .foregroundStyle(CleanShotTheme.warning)
+                        }
+                        if bestStreak > 0 {
+                            Label("\(bestStreak)d best", systemImage: "trophy.fill")
+                                .foregroundStyle(CleanShotTheme.gold)
+                        }
+                    } else {
+                        Label("Task", systemImage: "checklist")
+                            .foregroundStyle(.secondary)
                     }
                     HStack(spacing: 3) {
                         ForEach(recentDays) { day in
                             Circle()
                                 .fill(
                                     habit.completedDayKeys.contains(day.key)
-                                        ? CleanShotTheme.success
+                                        ? completionTint
                                         : CleanShotTheme.controlFill(for: colorScheme)
                                 )
                                 .frame(width: 6, height: 6)
@@ -291,6 +361,7 @@ struct HabitCard: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .frame(maxWidth: 560, alignment: .leading)
+        .background(cardTint, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .cleanShotSurface(
             shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
             level: .control,
@@ -299,11 +370,12 @@ struct HabitCard: View {
         .scaleEffect(isHovered ? 1.008 : 1)
         .animation(.smooth(duration: 0.15), value: isHovered)
         .onHover { isHovered = $0 }
+        .modifier(MatchedStampFrame(id: habit.persistentModelID, namespace: stampNamespace))
         .contextMenu {
             Button(role: .destructive) {
                 showArchiveConfirm = true
             } label: {
-                Label("Archive habit", systemImage: "archivebox")
+                Label("Archive \(habit.entryType.title.lowercased())", systemImage: "archivebox")
             }
         }
         .confirmationDialog(
@@ -318,7 +390,7 @@ struct HabitCard: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your streak history will be preserved. Archived habits can't be restored.")
+            Text("Your history will be preserved. Archived items can't be restored.")
         }
     }
 }
@@ -355,25 +427,67 @@ private struct SyncStatusBadge: View {
     }
 }
 
+// MARK: - Matched-geometry helper
+
+/// Opts the wrapped view into the shared stamp namespace when one is available,
+/// so the HabitCard and the AmbientStamp for the same habit can interpolate
+/// into each other on completion. When no namespace is threaded through, the
+/// modifier is a no-op (e.g. HabitCard used inside HabitSidebar).
+private struct MatchedStampFrame: ViewModifier {
+    let id: PersistentIdentifier
+    let namespace: Namespace.ID?
+
+    func body(content: Content) -> some View {
+        if let namespace {
+            content.matchedGeometryEffect(
+                id: id,
+                in: namespace,
+                properties: .frame,
+                anchor: .center,
+                isSource: true
+            )
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: - Ambient done-habit stamps
 
 struct DoneHabitPillsBackground: View {
     let habits: [Habit]
+    let todayKey: String
+    var stampNamespace: Namespace.ID? = nil
+
+    private static let noFlyCenterWidthRatio: CGFloat = 0.58
+    private static let noFlyCenterHeightRatio: CGFloat = 0.62
+    private static let minStampSeparation: CGFloat = 150
+    private static let stampMarginX: CGFloat = 48
+    private static let stampMarginY: CGFloat = 56
 
     var body: some View {
         GeometryReader { geo in
+            let layout = computeLayout(in: geo.size)
             TimelineView(.animation(minimumInterval: 1 / 30)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
                 ZStack {
                     ForEach(habits) { habit in
-                        let p = stampParams(for: habit, in: geo.size)
-                        let xOff = cos(t * p.speed * 0.55 + p.phase) * p.amp
-                        let yOff = sin(t * p.speed + p.phase + 0.8) * p.amp * 0.6
-                        let tilt  = p.restAngle + sin(t * p.speed * 0.25 + p.phase) * 2.5
-                        AmbientStamp(title: habit.title, accent: p.accent, scale: p.scale)
+                        if let slot = layout[habit.persistentModelID] {
+                            let xOff = cos(t * slot.speed * 0.55 + slot.phase) * slot.amp
+                            let yOff = sin(t * slot.speed + slot.phase + 0.8) * slot.amp * 0.6
+                            let tilt = slot.restAngle + sin(t * slot.speed * 0.25 + slot.phase) * 2.5
+                            AmbientStamp(
+                                habit: habit,
+                                todayKey: todayKey,
+                                accent: slot.accent,
+                                scale: slot.scale,
+                                stampNamespace: stampNamespace
+                            )
                             .rotationEffect(.degrees(tilt))
                             .offset(x: xOff, y: yOff)
-                            .position(x: p.x, y: p.y)
+                            .position(x: slot.x, y: slot.y)
+                            .transition(.opacity.combined(with: .scale(scale: 0.88)))
+                        }
                     }
                 }
             }
@@ -381,70 +495,143 @@ struct DoneHabitPillsBackground: View {
         .allowsHitTesting(false)
     }
 
-    private struct StampParams {
+    private struct Slot {
         let x, y: CGFloat
         let phase, speed, amp, restAngle: Double
         let accent: Color
         let scale: CGFloat
     }
 
-    private func stampParams(for habit: Habit, in size: CGSize) -> StampParams {
-        let s = habit.createdAt.timeIntervalSinceReferenceDate
-        let r0 = fract(sin(s * 127.1) * 43758.5)
-        let r1 = fract(sin(s * 311.7) * 93714.2)
-        let r2 = fract(sin(s * 451.3) * 75291.1)
-        let r3 = fract(sin(s * 211.9) * 58173.4)
-        let r4 = fract(sin(s * 173.3) * 64821.5)
-        let r5 = fract(sin(s * 397.7) * 81234.6)
-        let r6 = fract(sin(s * 523.1) * 37492.8)
+    /// Greedy placement: for each stamp (stable order by createdAt) pick a seeded
+    /// candidate, then nudge outward if it collides with an earlier stamp or
+    /// intersects the central no-fly rect that the main list occupies.
+    private func computeLayout(in size: CGSize) -> [PersistentIdentifier: Slot] {
+        guard size.width > 0, size.height > 0, !habits.isEmpty else { return [:] }
 
-        // 8 edge zones — stamps stay in the outer ~18% on left/right,
-        // or in the narrow top/bottom strips, never in the center panel.
-        let zone = Int(r0 * 8)
-        let (nx, ny): (Double, Double)
-        switch zone {
-        case 0: nx = r1 * 0.17 + 0.01; ny = r2 * 0.40 + 0.05
-        case 1: nx = r1 * 0.17 + 0.01; ny = r2 * 0.38 + 0.56
-        case 2: nx = 0.83 + r1 * 0.16; ny = r2 * 0.40 + 0.05
-        case 3: nx = 0.83 + r1 * 0.16; ny = r2 * 0.38 + 0.56
-        case 4: nx = r1 * 0.14 + 0.01; ny = r2 * 0.88 + 0.05
-        case 5: nx = 0.85 + r1 * 0.14; ny = r2 * 0.88 + 0.05
-        case 6: nx = r1 * 0.50 + 0.25; ny = r2 * 0.07 + 0.01
-        default: nx = r1 * 0.50 + 0.25; ny = 0.93 + r2 * 0.06
+        let ordered = habits.sorted { $0.createdAt < $1.createdAt }
+        let noFly = CGRect(
+            x: size.width * (1 - Self.noFlyCenterWidthRatio) / 2,
+            y: size.height * (1 - Self.noFlyCenterHeightRatio) / 2,
+            width: size.width * Self.noFlyCenterWidthRatio,
+            height: size.height * Self.noFlyCenterHeightRatio
+        )
+
+        var placed: [CGPoint] = []
+        var result: [PersistentIdentifier: Slot] = [:]
+
+        for (index, habit) in ordered.enumerated() {
+            let seed = habit.createdAt.timeIntervalSinceReferenceDate + Double(index) * 13.7
+            let params = stampParams(seed: seed, habit: habit)
+            let point = findCandidate(
+                seed: seed,
+                size: size,
+                noFly: noFly,
+                placed: placed
+            )
+            placed.append(point)
+            result[habit.persistentModelID] = Slot(
+                x: point.x,
+                y: point.y,
+                phase: params.phase,
+                speed: params.speed,
+                amp: params.amp,
+                restAngle: params.restAngle,
+                accent: params.accent,
+                scale: params.scale
+            )
         }
+        return result
+    }
 
-        let palette: [Color] = [
-            .green,
-            Color(red: 0.18, green: 0.76, blue: 0.60),
-            Color(red: 0.55, green: 0.33, blue: 0.98),
-            Color(red: 1.0,  green: 0.60, blue: 0.16),
-            Color(red: 0.22, green: 0.65, blue: 0.98),
-            Color(red: 0.94, green: 0.33, blue: 0.54),
-        ]
-        let accent = palette[Int(r5 * Double(palette.count)) % palette.count]
+    private struct StampParams {
+        let phase, speed, amp, restAngle: Double
+        let accent: Color
+        let scale: CGFloat
+    }
+
+    private func stampParams(seed: Double, habit: Habit) -> StampParams {
+        let r2 = fract(sin(seed * 451.3) * 75291.1)
+        let r3 = fract(sin(seed * 211.9) * 58173.4)
+        let r4 = fract(sin(seed * 173.3) * 64821.5)
+        let r5 = fract(sin(seed * 397.7) * 81234.6)
+        let r6 = fract(sin(seed * 523.1) * 37492.8)
+
+        let accent: Color = (habit.entryType == .habit)
+            ? CleanShotTheme.success
+            : CleanShotTheme.accent
 
         return StampParams(
-            x:         CGFloat(nx) * size.width,
-            y:         CGFloat(ny) * size.height,
             phase:     r2 * .pi * 2,
             speed:     r3 * 0.13 + 0.07,
             amp:       r4 * 10 + 5,
             restAngle: r5 * 14 - 7,
             accent:    accent,
-            scale:     CGFloat(r6 * 0.22 + 0.84)
+            scale:     CGFloat(r6 * 0.22 + 0.86)
         )
+    }
+
+    private func findCandidate(
+        seed: Double,
+        size: CGSize,
+        noFly: CGRect,
+        placed: [CGPoint]
+    ) -> CGPoint {
+        let minX = Self.stampMarginX
+        let maxX = max(minX + 1, size.width - Self.stampMarginX)
+        let minY = Self.stampMarginY
+        let maxY = max(minY + 1, size.height - Self.stampMarginY)
+
+        var best: CGPoint = CGPoint(x: minX, y: minY)
+        var bestScore: CGFloat = -.infinity
+
+        for attempt in 0..<28 {
+            let sx = fract(sin(seed * (131.7 + Double(attempt) * 0.91)) * 67381.2)
+            let sy = fract(sin(seed * (217.3 + Double(attempt) * 1.07)) * 54217.6)
+            var candidate = CGPoint(
+                x: CGFloat(sx) * (maxX - minX) + minX,
+                y: CGFloat(sy) * (maxY - minY) + minY
+            )
+
+            if noFly.contains(candidate) {
+                // Push candidate toward the nearest edge of the no-fly rect
+                let dLeft = candidate.x - noFly.minX
+                let dRight = noFly.maxX - candidate.x
+                let dTop = candidate.y - noFly.minY
+                let dBottom = noFly.maxY - candidate.y
+                let minD = min(dLeft, dRight, dTop, dBottom)
+                if minD == dLeft { candidate.x = noFly.minX - 24 }
+                else if minD == dRight { candidate.x = noFly.maxX + 24 }
+                else if minD == dTop { candidate.y = noFly.minY - 24 }
+                else { candidate.y = noFly.maxY + 24 }
+                candidate.x = min(max(candidate.x, minX), maxX)
+                candidate.y = min(max(candidate.y, minY), maxY)
+            }
+
+            let nearest = placed.map { hypot(candidate.x - $0.x, candidate.y - $0.y) }.min() ?? .infinity
+            if nearest >= Self.minStampSeparation { return candidate }
+            if nearest > bestScore {
+                bestScore = nearest
+                best = candidate
+            }
+        }
+        return best
     }
 
     private func fract(_ v: Double) -> Double { v - floor(v) }
 }
 
 private struct AmbientStamp: View {
-    let title: String
+    let habit: Habit
+    let todayKey: String
     let accent: Color
     let scale: CGFloat
+    var stampNamespace: Namespace.ID? = nil
 
-    @State private var visible = false
-    @State private var pulse   = false
+    @State private var pulse = false
+
+    private var recentDays: [DayInfo] {
+        DateKey.recentDays(count: 7, endingAt: DateKey.date(from: todayKey))
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -465,11 +652,23 @@ private struct AmbientStamp: View {
                 value: pulse
             )
 
-            Text(title)
+            Text(habit.title)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundStyle(.primary.opacity(0.70))
                 .lineLimit(1)
                 .frame(maxWidth: 80)
+
+            HStack(spacing: 3) {
+                ForEach(recentDays) { day in
+                    Circle()
+                        .fill(
+                            habit.completedDayKeys.contains(day.key)
+                                ? accent
+                                : accent.opacity(0.18)
+                        )
+                        .frame(width: 4, height: 4)
+                }
+            }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 11)
@@ -489,11 +688,9 @@ private struct AmbientStamp: View {
                 )
         }
         .shadow(color: .black.opacity(0.06), radius: 3,  x: 0, y: 1)
-        .scaleEffect(visible ? scale : 0.3)
-        .opacity(visible ? 0.80 : 0)
-        .onAppear {
-            withAnimation(.spring(response: 0.7, dampingFraction: 0.58)) { visible = true }
-            pulse = true
-        }
+        .scaleEffect(scale)
+        .opacity(0.82)
+        .modifier(MatchedStampFrame(id: habit.persistentModelID, namespace: stampNamespace))
+        .onAppear { pulse = true }
     }
 }

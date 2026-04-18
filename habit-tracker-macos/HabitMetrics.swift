@@ -244,12 +244,21 @@ struct HabitMetrics {
         return best
     }
 
-    private static func perfectDayKeys(for habits: [Habit]) -> [String] {
+    static func perfectDayKeys(for habits: [Habit]) -> [String] {
         guard !habits.isEmpty else { return [] }
 
+        let calendar = Calendar.current
         let allKeys = Set(habits.flatMap(\.completedDayKeys))
+
         return allKeys
-            .filter { key in habits.allSatisfy { $0.completedDayKeys.contains(key) } }
+            .filter { key in
+                let day = calendar.startOfDay(for: DateKey.date(from: key))
+                let activeEntries = habits.filter {
+                    calendar.startOfDay(for: $0.createdAt) <= day
+                }
+                guard !activeEntries.isEmpty else { return false }
+                return activeEntries.allSatisfy { $0.completedDayKeys.contains(key) }
+            }
             .sorted()
     }
 

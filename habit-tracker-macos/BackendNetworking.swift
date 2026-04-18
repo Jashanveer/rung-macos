@@ -432,30 +432,118 @@ struct HabitRepository {
     let client: BackendAPIClient
 
     func listHabits() async throws -> [BackendHabit] {
-        try await client.authorizedRequest(path: "/api/habits", method: "GET")
+        let habits: [BackendHabit] = try await client.authorizedRequest(path: "/api/habits", method: "GET")
+        return habits.map { habit in
+            BackendHabit(
+                id: habit.id,
+                title: habit.title,
+                checksByDate: habit.checksByDate,
+                reminderWindow: habit.reminderWindow,
+                entryType: .habit
+            )
+        }
+    }
+
+    func listTasks() async throws -> [BackendHabit] {
+        let tasks: [BackendHabit] = try await client.authorizedRequest(path: "/api/tasks", method: "GET")
+        return tasks.map { task in
+            BackendHabit(
+                id: task.id,
+                title: task.title,
+                checksByDate: task.checksByDate,
+                reminderWindow: nil,
+                entryType: .task
+            )
+        }
     }
 
     func createHabit(title: String, reminderWindow: String?) async throws -> BackendHabit {
-        try await client.authorizedRequest(
+        let habit: BackendHabit = try await client.authorizedRequest(
             path: "/api/habits",
             method: "POST",
             body: HabitWriteRequest(title: title, reminderWindow: reminderWindow)
         )
+        return BackendHabit(
+            id: habit.id,
+            title: habit.title,
+            checksByDate: habit.checksByDate,
+            reminderWindow: habit.reminderWindow,
+            entryType: .habit
+        )
+    }
+
+    func createTask(title: String) async throws -> BackendHabit {
+        let task: BackendHabit = try await client.authorizedRequest(
+            path: "/api/tasks",
+            method: "POST",
+            body: TaskWriteRequest(title: title)
+        )
+        return BackendHabit(
+            id: task.id,
+            title: task.title,
+            checksByDate: task.checksByDate,
+            reminderWindow: nil,
+            entryType: .task
+        )
     }
 
     func updateHabit(habitID: Int64, title: String, reminderWindow: String?) async throws -> BackendHabit {
-        try await client.authorizedRequest(
+        let habit: BackendHabit = try await client.authorizedRequest(
             path: "/api/habits/\(habitID)",
             method: "PUT",
             body: HabitWriteRequest(title: title, reminderWindow: reminderWindow)
         )
+        return BackendHabit(
+            id: habit.id,
+            title: habit.title,
+            checksByDate: habit.checksByDate,
+            reminderWindow: habit.reminderWindow,
+            entryType: .habit
+        )
+    }
+
+    func updateTask(taskID: Int64, title: String) async throws -> BackendHabit {
+        let task: BackendHabit = try await client.authorizedRequest(
+            path: "/api/tasks/\(taskID)",
+            method: "PUT",
+            body: TaskWriteRequest(title: title)
+        )
+        return BackendHabit(
+            id: task.id,
+            title: task.title,
+            checksByDate: task.checksByDate,
+            reminderWindow: nil,
+            entryType: .task
+        )
     }
 
     func setCheck(habitID: Int64, dateKey: String, done: Bool) async throws -> BackendHabit {
-        try await client.authorizedRequest(
+        let habit: BackendHabit = try await client.authorizedRequest(
             path: "/api/habits/\(habitID)/checks/\(dateKey)",
             method: "PUT",
             body: CheckUpdateRequest(done: done)
+        )
+        return BackendHabit(
+            id: habit.id,
+            title: habit.title,
+            checksByDate: habit.checksByDate,
+            reminderWindow: habit.reminderWindow,
+            entryType: .habit
+        )
+    }
+
+    func setTaskCheck(taskID: Int64, dateKey: String, done: Bool) async throws -> BackendHabit {
+        let task: BackendHabit = try await client.authorizedRequest(
+            path: "/api/tasks/\(taskID)/checks/\(dateKey)",
+            method: "PUT",
+            body: CheckUpdateRequest(done: done)
+        )
+        return BackendHabit(
+            id: task.id,
+            title: task.title,
+            checksByDate: task.checksByDate,
+            reminderWindow: nil,
+            entryType: .task
         )
     }
 
@@ -463,10 +551,15 @@ struct HabitRepository {
         let _: EmptyResponse = try await client.authorizedRequest(path: "/api/habits/\(habitID)", method: "DELETE")
     }
 
+    func deleteTask(taskID: Int64) async throws {
+        let _: EmptyResponse = try await client.authorizedRequest(path: "/api/tasks/\(taskID)", method: "DELETE")
+    }
+
     private struct HabitWriteRequest: Encodable {
         let title: String
         let reminderWindow: String?
     }
+    private struct TaskWriteRequest: Encodable { let title: String }
     private struct CheckUpdateRequest:  Encodable { let done: Bool }
     private struct EmptyResponse: Decodable {}
 }

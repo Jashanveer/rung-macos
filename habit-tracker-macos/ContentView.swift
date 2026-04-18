@@ -11,11 +11,17 @@ struct ContentView: View {
 
     @State private var hasCompletedOnboarding = false
     @State private var newHabitTitle = ""
+    @State private var newEntryType: HabitEntryType = .task
     @State private var progressOpen = false
     @State private var calendarOpen = false
     @State private var settingsOpen = false
     @State private var showCelebration = false
     @State private var mentorNudge: String? = nil
+    /// Freshly-checked habits that should linger in the list for a short beat so
+    /// the 7-day dot row can fill in place before the card morphs into a
+    /// background stamp via matched geometry.
+    @State private var stampStagingIds: Set<PersistentIdentifier> = []
+    @Namespace private var stampNamespace
 
     private var showOnboarding: Bool { backend.isAuthenticated && !hasCompletedOnboarding }
 
@@ -50,6 +56,7 @@ struct ContentView: View {
             habits: habits,
             todayKey: todayKey,
             newHabitTitle: $newHabitTitle,
+            newEntryType: $newEntryType,
             metrics: metrics,
             backend: backend,
             progressOpen: $progressOpen,
@@ -61,6 +68,8 @@ struct ContentView: View {
             showMenteeCharacter: showMenteeCharacter,
             mentorMissedCount: mentorMissedCount,
             showOnboarding: showOnboarding,
+            stampNamespace: stampNamespace,
+            stampStagingIds: stampStagingIds,
             onAddHabit: addHabit,
             onToggleHabit: toggleHabit,
             onDeleteHabit: archiveHabit,
@@ -73,6 +82,15 @@ struct ContentView: View {
             hasCompletedOnboarding = isAuth
                 ? UserDefaults.standard.bool(forKey: onboardingKey)
                 : false
+        }
+        .onChange(of: backend.justRegistered) { _, isNew in
+            guard isNew else { return }
+            // Fresh registration — force the James Clear overview to appear once,
+            // overriding any stale onboarded_<userId> UserDefaults key left from
+            // a prior dev database reset or a re-registered deleted account.
+            UserDefaults.standard.removeObject(forKey: onboardingKey)
+            hasCompletedOnboarding = false
+            backend.justRegistered = false
         }
         .onAppear {
             if backend.isAuthenticated {
@@ -100,28 +118,37 @@ struct ContentView: View {
 
     // MARK: - Add habit
 
-    private func addHabit() {
+    private func addHabit(_ entryType: HabitEntryType) {
         let title = newHabitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
 
         guard backend.isAuthenticated else {
-            backend.errorMessage = "Sign in before adding habits."
+            backend.errorMessage = "Sign in before adding items."
             return
         }
 
         // Optimistic local insert with .pending status
-        let localHabit = Habit(title: title, syncStatus: .pending)
+        let localHabit = Habit(title: title, entryType: entryType, syncStatus: .pending)
         withAnimation { modelContext.insert(localHabit) }
         newHabitTitle = ""
 
         Task {
             do {
-                let remoteHabit = try await backend.createHabit(title: title, reminderWindow: localHabit.reminderWindow)
+                let remoteHabit: BackendHabit
+                switch entryType {
+                case .habit:
+                    remoteHabit = try await backend.createHabit(
+                        title: title,
+                        reminderWindow: localHabit.reminderWindow
+                    )
+                case .task:
+                    remoteHabit = try await backend.createTask(title: title)
+                }
                 localHabit.backendId  = remoteHabit.id
                 localHabit.reminderWindow = remoteHabit.reminderWindow
                 localHabit.syncStatus = .synced
                 localHabit.updatedAt  = Date()
-                backend.statusMessage = "Habit synced"
+                backend.statusMessage = "\(entryType.title) synced"
                 backend.errorMessage  = nil
                 await backend.refreshDashboard()
             } catch {
@@ -140,7 +167,11 @@ struct ContentView: View {
         Task {
             do {
                 try await flushOutbox()
-                let remote = try await backend.listHabits()
+                async let habitsResponse = backend.listHabits()
+                async let tasksResponse = backend.listTasks()
+                let remoteHabits = try await habitsResponse
+                let remoteTasks = try await tasksResponse
+                let remote = remoteHabits + remoteTasks
                 applyReconcile(SyncEngine.reconcile(local: habits, remote: remote))
                 backend.statusMessage = "Synced with \(BackendEnvironment.displayHost)"
                 backend.errorMessage  = nil
@@ -159,12 +190,26 @@ struct ContentView: View {
         for habit in SyncEngine.pendingCreates(in: habits) {
             habit.syncStatus = .pending
             do {
-                let remote = try await backend.createHabit(title: habit.title, reminderWindow: habit.reminderWindow)
+                let remote: BackendHabit
+                switch habit.entryType {
+                case .habit:
+                    remote = try await backend.createHabit(
+                        title: habit.title,
+                        reminderWindow: habit.reminderWindow
+                    )
+                case .task:
+                    remote = try await backend.createTask(title: habit.title)
+                }
                 habit.backendId  = remote.id
                 habit.reminderWindow = remote.reminderWindow
                 // Upload any pre-existing checks for this habit
                 for dayKey in habit.completedDayKeys {
-                    try await backend.setCheck(habitID: remote.id, dateKey: dayKey, done: true)
+                    switch habit.entryType {
+                    case .habit:
+                        try await backend.setCheck(habitID: remote.id, dateKey: dayKey, done: true)
+                    case .task:
+                        try await backend.setTaskCheck(taskID: remote.id, dateKey: dayKey, done: true)
+                    }
                 }
                 habit.syncStatus = .synced
                 habit.updatedAt  = Date()
@@ -178,11 +223,17 @@ struct ContentView: View {
         for habit in habits where habit.backendId != nil && (habit.syncStatus == .pending || habit.syncStatus == .failed) {
             guard let bid = habit.backendId else { continue }
             do {
-                let remote = try await backend.updateHabit(
-                    habitID: bid,
-                    title: habit.title,
-                    reminderWindow: habit.reminderWindow
-                )
+                let remote: BackendHabit
+                switch habit.entryType {
+                case .habit:
+                    remote = try await backend.updateHabit(
+                        habitID: bid,
+                        title: habit.title,
+                        reminderWindow: habit.reminderWindow
+                    )
+                case .task:
+                    remote = try await backend.updateTask(taskID: bid, title: habit.title)
+                }
                 habit.title = remote.title
                 habit.reminderWindow = remote.reminderWindow
                 if habit.pendingCheckDayKey == nil && habit.syncStatus == .pending {
@@ -201,7 +252,12 @@ struct ContentView: View {
             guard let bid = habit.backendId else { continue }
             do {
                 for dayKey in habit.completedDayKeys {
-                    try await backend.setCheck(habitID: bid, dateKey: dayKey, done: true)
+                    switch habit.entryType {
+                    case .habit:
+                        try await backend.setCheck(habitID: bid, dateKey: dayKey, done: true)
+                    case .task:
+                        try await backend.setTaskCheck(taskID: bid, dateKey: dayKey, done: true)
+                    }
                 }
                 if habit.pendingCheckDayKey == nil {
                     habit.syncStatus = .synced
@@ -221,7 +277,12 @@ struct ContentView: View {
             guard let bid = habit.backendId, let dayKey = habit.pendingCheckDayKey else { continue }
             let done = habit.pendingCheckIsDone
             do {
-                try await backend.setCheck(habitID: bid, dateKey: dayKey, done: done)
+                switch habit.entryType {
+                case .habit:
+                    try await backend.setCheck(habitID: bid, dateKey: dayKey, done: done)
+                case .task:
+                    try await backend.setTaskCheck(taskID: bid, dateKey: dayKey, done: done)
+                }
                 habit.pendingCheckDayKey = nil   // confirmed — reconcile may now overwrite safely
                 habit.syncStatus = .synced
                 habit.updatedAt  = Date()
@@ -244,6 +305,7 @@ struct ContentView: View {
             guard local.syncStatus == .synced || local.syncStatus == .failed else { continue }
             local.title             = remote.title
             local.reminderWindow    = remote.reminderWindow
+            local.entryType         = remote.entryType
             local.completedDayKeys  = remote.completedDayKeys
             local.syncStatus        = .synced
             local.updatedAt         = Date()
@@ -251,6 +313,7 @@ struct ContentView: View {
         for remote in result.toInsert {
             modelContext.insert(Habit(
                 title: remote.title,
+                entryType: remote.entryType,
                 completedDayKeys: remote.completedDayKeys,
                 backendId: remote.id,
                 syncStatus: .synced,
@@ -269,6 +332,14 @@ struct ContentView: View {
         let wasUnchecked = !keys.contains(todayKey)
         if let i = keys.firstIndex(of: todayKey) { keys.remove(at: i) } else { keys.append(todayKey) }
 
+        let habitID = habit.persistentModelID
+
+        if wasUnchecked {
+            // Hold the card in the list while the 7th day dot fills, then release
+            // so matched geometry can morph the card into a background stamp.
+            stampStagingIds.insert(habitID)
+        }
+
         withAnimation(.snappy(duration: 0.2)) {
             habit.completedDayKeys = keys.sorted()
             habit.updatedAt = Date()
@@ -279,6 +350,19 @@ struct ContentView: View {
                 habit.pendingCheckDayKey = todayKey
                 habit.pendingCheckIsDone = wasUnchecked
             }
+        }
+
+        if wasUnchecked {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) {
+                    _ = stampStagingIds.remove(habitID)
+                }
+            }
+        } else {
+            // Unchecking a habit that was showing as a stamp — skip staging so it
+            // reappears in the list immediately.
+            stampStagingIds.remove(habitID)
         }
 
         if wasUnchecked && showMentorCharacter {
@@ -297,7 +381,12 @@ struct ContentView: View {
         guard let backendId = habit.backendId, backend.isAuthenticated else { return }
         Task {
             do {
-                try await backend.setCheck(habitID: backendId, dateKey: todayKey, done: wasUnchecked)
+                switch habit.entryType {
+                case .habit:
+                    try await backend.setCheck(habitID: backendId, dateKey: todayKey, done: wasUnchecked)
+                case .task:
+                    try await backend.setTaskCheck(taskID: backendId, dateKey: todayKey, done: wasUnchecked)
+                }
                 habit.pendingCheckDayKey = nil   // operation confirmed — safe to reconcile
                 habit.syncStatus = .synced
                 await backend.refreshDashboard()
@@ -322,7 +411,12 @@ struct ContentView: View {
         guard let backendId, backend.isAuthenticated else { return }
         Task {
             do {
-                try await backend.deleteHabit(habitID: backendId)
+                switch habit.entryType {
+                case .habit:
+                    try await backend.deleteHabit(habitID: backendId)
+                case .task:
+                    try await backend.deleteTask(taskID: backendId)
+                }
                 await backend.refreshDashboard()
                 refreshTimeReminders()
             } catch {
@@ -332,6 +426,8 @@ struct ContentView: View {
     }
 
     private func updateReminderWindow(_ habit: Habit, _ window: HabitReminderWindow?) {
+        guard habit.entryType == .habit else { return }
+
         withAnimation(.smooth(duration: 0.16)) {
             habit.reminderWindow = window?.rawValue
             habit.updatedAt = Date()
@@ -369,7 +465,7 @@ struct ContentView: View {
         for title in habitTitles {
             let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            let habit = Habit(title: trimmed, syncStatus: .pending)
+            let habit = Habit(title: trimmed, entryType: .habit, syncStatus: .pending)
             modelContext.insert(habit)
         }
         UserDefaults.standard.set(true, forKey: onboardingKey)
@@ -392,7 +488,10 @@ struct ContentView: View {
     }
 
     private func refreshTimeReminders() {
-        timeReminderManager.refreshReminders(for: habits, todayKey: todayKey)
+        timeReminderManager.refreshReminders(
+            for: habits.filter { $0.entryType == .habit },
+            todayKey: todayKey
+        )
     }
 }
 

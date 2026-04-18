@@ -26,6 +26,74 @@ struct HabitMetricsTests {
         #expect(m.perfectDays         == ["2026-04-15"])
         #expect(m.currentPerfectStreak == 0)
     }
+
+    @Test func perfectDayRequiresBothTasksAndHabits() {
+        let habitsWithTaskUndone = [
+            Habit(
+                title: "Read",
+                entryType: .habit,
+                createdAt: DateKey.date(from: "2026-04-10"),
+                completedDayKeys: ["2026-04-17"]
+            ),
+            Habit(
+                title: "Walk",
+                entryType: .habit,
+                createdAt: DateKey.date(from: "2026-04-10"),
+                completedDayKeys: ["2026-04-17"]
+            ),
+            Habit(
+                title: "Buy milk",
+                entryType: .task,
+                createdAt: DateKey.date(from: "2026-04-10"),
+                completedDayKeys: []
+            )
+        ]
+        let undone = HabitMetrics.compute(for: habitsWithTaskUndone, todayKey: "2026-04-18")
+        #expect(!undone.perfectDays.contains("2026-04-17"))
+
+        let habitsWithTaskDone = [
+            Habit(
+                title: "Read",
+                entryType: .habit,
+                createdAt: DateKey.date(from: "2026-04-10"),
+                completedDayKeys: ["2026-04-17"]
+            ),
+            Habit(
+                title: "Walk",
+                entryType: .habit,
+                createdAt: DateKey.date(from: "2026-04-10"),
+                completedDayKeys: ["2026-04-17"]
+            ),
+            Habit(
+                title: "Buy milk",
+                entryType: .task,
+                createdAt: DateKey.date(from: "2026-04-10"),
+                completedDayKeys: ["2026-04-17"]
+            )
+        ]
+        let done = HabitMetrics.compute(for: habitsWithTaskDone, todayKey: "2026-04-18")
+        #expect(done.perfectDays.contains("2026-04-17"))
+    }
+
+    @Test func perfectDayOnlyRequiresHabitsActiveThatDay() {
+        let habits = [
+            Habit(
+                title: "Read",
+                entryType: .habit,
+                createdAt: DateKey.date(from: "2026-04-10"),
+                completedDayKeys: ["2026-04-17"]
+            ),
+            Habit(
+                title: "New habit",
+                entryType: .habit,
+                createdAt: DateKey.date(from: "2026-04-18"),
+                completedDayKeys: []
+            )
+        ]
+
+        let m = HabitMetrics.compute(for: habits, todayKey: "2026-04-18")
+        #expect(m.perfectDays.contains("2026-04-17"))
+    }
 }
 
 // MARK: - RetryPolicy
@@ -201,6 +269,16 @@ struct HabitModelTests {
     @Test func defaultSyncStatusIsPending() {
         let h = Habit(title: "Test")
         #expect(h.syncStatus == .pending)
+    }
+
+    @Test func defaultEntryTypeIsHabit() {
+        let h = Habit(title: "Default type")
+        #expect(h.entryType == .habit)
+    }
+
+    @Test func taskEntryTypeCanBeStored() {
+        let h = Habit(title: "Buy milk", entryType: .task)
+        #expect(h.entryType == .task)
     }
 
     @Test func syncStatusRoundtripsAsRawValue() {

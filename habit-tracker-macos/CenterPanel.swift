@@ -1,14 +1,18 @@
 import FoundationModels
+import SwiftData
 import SwiftUI
 
 struct CenterPanel: View {
     let habits: [Habit]
     let todayKey: String
     @Binding var newHabitTitle: String
+    @Binding var newEntryType: HabitEntryType
 
     let metrics: HabitMetrics
     var clusters: [AccountabilityDashboard.HabitTimeCluster] = []
-    let onAddHabit: () -> Void
+    let stampNamespace: Namespace.ID
+    let stampStagingIds: Set<PersistentIdentifier>
+    let onAddHabit: (HabitEntryType) -> Void
     let onToggleHabit: (Habit) -> Void
     let onDeleteHabit: (Habit) -> Void
 
@@ -16,7 +20,10 @@ struct CenterPanel: View {
     @State private var hasRequestedGreeting = false
 
     private var pendingHabits: [Habit] {
-        habits.filter { !$0.completedDayKeys.contains(todayKey) }
+        habits.filter {
+            !$0.completedDayKeys.contains(todayKey)
+                || stampStagingIds.contains($0.persistentModelID)
+        }
     }
     private var isEmpty: Bool { habits.isEmpty }
     private var allDoneToday: Bool { !habits.isEmpty && pendingHabits.isEmpty }
@@ -30,11 +37,15 @@ struct CenterPanel: View {
 
             TodayHeader(greeting: displayGreeting, isCompact: isCompact)
 
-            AddHabitBar(newHabitTitle: $newHabitTitle, onAddHabit: onAddHabit)
+            AddHabitBar(
+                newHabitTitle: $newHabitTitle,
+                selectedType: $newEntryType,
+                onAddHabit: onAddHabit
+            )
                 .frame(maxWidth: 520)
 
             if isEmpty {
-                Text("Add your first habit to get started")
+                Text("Add your first task to get started")
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
                     .padding(.top, 4)
@@ -43,7 +54,7 @@ struct CenterPanel: View {
                 VStack(spacing: 8) {
                     Text("All done for today")
                         .font(.system(size: 18, weight: .semibold, design: .rounded))
-                    Text("Your habits are drifting in the background.\nSee you tomorrow.")
+                    Text("Your list is complete for today.\nSee you tomorrow.")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
                         .multilineTextAlignment(.center)
@@ -57,7 +68,8 @@ struct CenterPanel: View {
                         todayKey: todayKey,
                         onToggle: onToggleHabit,
                         onDelete: onDeleteHabit,
-                        clusters: clusters
+                        clusters: clusters,
+                        stampNamespace: stampNamespace
                     )
                     .padding(.top, 4)
                     .padding(.bottom, 60)
@@ -134,4 +146,3 @@ struct CenterPanel: View {
 }
 
 // MARK: - Floating Habit Background
-

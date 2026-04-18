@@ -32,9 +32,13 @@ struct CalendarSheet: View {
     let onClose: () -> Void
     @State private var displayMode: CalendarDisplayMode = .activity
 
+    private var streakHabits: [Habit] {
+        habits.filter { $0.entryType == .habit }
+    }
+
     private var dailyCompletionCounts: [String: Int] {
         var counts: [String: Int] = [:]
-        for habit in habits {
+        for habit in streakHabits {
             for dayKey in Set(habit.completedDayKeys) {
                 counts[dayKey, default: 0] += 1
             }
@@ -42,15 +46,10 @@ struct CalendarSheet: View {
         return counts
     }
     private var perfectDayKeys: Set<String> {
-        guard !habits.isEmpty else { return [] }
-        return Set(
-            dailyCompletionCounts
-                .filter { $0.value == habits.count }
-                .map(\.key)
-        )
+        Set(HabitMetrics.perfectDayKeys(for: streakHabits))
     }
     private var totalHabits: Int {
-        habits.count
+        streakHabits.count
     }
 
     var body: some View {

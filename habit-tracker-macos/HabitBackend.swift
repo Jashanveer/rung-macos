@@ -6,12 +6,36 @@ struct BackendHabit: Decodable, Identifiable {
     let title: String
     let reminderWindow: String?
     let checksByDate: [String: Bool]
+    let entryType: HabitEntryType
 
-    init(id: Int64, title: String, checksByDate: [String: Bool], reminderWindow: String? = nil) {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case reminderWindow
+        case checksByDate
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int64.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        reminderWindow = try container.decodeIfPresent(String.self, forKey: .reminderWindow)
+        checksByDate = try container.decode([String: Bool].self, forKey: .checksByDate)
+        entryType = .habit
+    }
+
+    init(
+        id: Int64,
+        title: String,
+        checksByDate: [String: Bool],
+        reminderWindow: String? = nil,
+        entryType: HabitEntryType = .habit
+    ) {
         self.id = id
         self.title = title
         self.reminderWindow = reminderWindow
         self.checksByDate = checksByDate
+        self.entryType = entryType
     }
 
     var completedDayKeys: [String] {
@@ -176,6 +200,10 @@ final class HabitBackendStore: ObservableObject {
     @Published var isSyncing = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
+    /// Set to true on a successful register() call so the UI can force the
+    /// onboarding overview to appear regardless of any stale UserDefaults
+    /// onboarded_<userId> key. UI should reset this to false after consuming.
+    @Published var justRegistered: Bool = false
 
     // Per-endpoint request states — UI can show per-section loading/error indicators
     @Published private(set) var authRequestState:        RequestState<Void>                    = .idle
@@ -294,6 +322,7 @@ final class HabitBackendStore: ObservableObject {
                 verificationCode: verificationCode
             )
             applySession(session)
+            justRegistered = true
             statusMessage = "Connected to \(BackendEnvironment.displayHost)"
             errorMessage = nil
             authRequestState = .success(())
@@ -352,6 +381,23 @@ final class HabitBackendStore: ObservableObject {
         }
     }
 
+    func listTasks() async throws -> [BackendHabit] {
+        habitListRequestState = .loading; refreshSyncingState()
+        do {
+            let tasks = try await habitRepository.listTasks()
+            await syncSessionFromClient()
+            habitListRequestState = .success(tasks)
+            errorMessage = nil
+            refreshSyncingState()
+            return tasks
+        } catch {
+            handleAuthenticatedRequestError(error)
+            habitListRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
+            throw error
+        }
+    }
+
     func createHabit(title: String, reminderWindow: String? = nil) async throws -> BackendHabit {
         createHabitRequestState = .loading; refreshSyncingState()
         do {
@@ -362,6 +408,24 @@ final class HabitBackendStore: ObservableObject {
             errorMessage = nil
             refreshSyncingState()
             return habit
+        } catch {
+            handleAuthenticatedRequestError(error)
+            createHabitRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
+            throw error
+        }
+    }
+
+    func createTask(title: String) async throws -> BackendHabit {
+        createHabitRequestState = .loading; refreshSyncingState()
+        do {
+            let task = try await habitRepository.createTask(title: title)
+            await syncSessionFromClient()
+            await responseCache.invalidateHabits()
+            createHabitRequestState = .success(task)
+            errorMessage = nil
+            refreshSyncingState()
+            return task
         } catch {
             handleAuthenticatedRequestError(error)
             createHabitRequestState = .failure(error.localizedDescription)
@@ -392,6 +456,24 @@ final class HabitBackendStore: ObservableObject {
         }
     }
 
+    func updateTask(taskID: Int64, title: String) async throws -> BackendHabit {
+        updateHabitRequestState = .loading; refreshSyncingState()
+        do {
+            let task = try await habitRepository.updateTask(taskID: taskID, title: title)
+            await syncSessionFromClient()
+            await responseCache.invalidateHabits()
+            updateHabitRequestState = .success(task)
+            errorMessage = nil
+            refreshSyncingState()
+            return task
+        } catch {
+            handleAuthenticatedRequestError(error)
+            updateHabitRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
+            throw error
+        }
+    }
+
     func setCheck(habitID: Int64, dateKey: String, done: Bool) async throws {
         checkUpdateRequestState = .loading; refreshSyncingState()
         do {
@@ -410,10 +492,45 @@ final class HabitBackendStore: ObservableObject {
         }
     }
 
+    func setTaskCheck(taskID: Int64, dateKey: String, done: Bool) async throws {
+        checkUpdateRequestState = .loading; refreshSyncingState()
+        do {
+            _ = try await habitRepository.setTaskCheck(taskID: taskID, dateKey: dateKey, done: done)
+            await syncSessionFromClient()
+            await responseCache.invalidateHabits()
+            await responseCache.invalidateDashboard()
+            checkUpdateRequestState = .success(())
+            errorMessage = nil
+            refreshSyncingState()
+        } catch {
+            handleAuthenticatedRequestError(error)
+            checkUpdateRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
+            throw error
+        }
+    }
+
     func deleteHabit(habitID: Int64) async throws {
         deleteHabitRequestState = .loading; refreshSyncingState()
         do {
             try await habitRepository.deleteHabit(habitID: habitID)
+            await syncSessionFromClient()
+            await responseCache.invalidateHabits()
+            deleteHabitRequestState = .success(())
+            errorMessage = nil
+            refreshSyncingState()
+        } catch {
+            handleAuthenticatedRequestError(error)
+            deleteHabitRequestState = .failure(error.localizedDescription)
+            refreshSyncingState()
+            throw error
+        }
+    }
+
+    func deleteTask(taskID: Int64) async throws {
+        deleteHabitRequestState = .loading; refreshSyncingState()
+        do {
+            try await habitRepository.deleteTask(taskID: taskID)
             await syncSessionFromClient()
             await responseCache.invalidateHabits()
             deleteHabitRequestState = .success(())
@@ -731,6 +848,7 @@ final class HabitBackendStore: ObservableObject {
         token = nil; dashboard = nil; liveMessagesByMatch = [:]
         lastSentMessageAt = nil; lastSentMessageText = nil
         statusMessage = nil; self.errorMessage = errorMessage
+        justRegistered = false
         Self.saveSession(nil, key: sessionKey)
         UserDefaults.standard.removeObject(forKey: "habitTracker.localhost.token")
         authRequestState = .idle; habitListRequestState = .idle; dashboardRequestState = .idle

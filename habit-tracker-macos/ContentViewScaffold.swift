@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 struct ContentViewScaffold: View {
@@ -5,6 +6,7 @@ struct ContentViewScaffold: View {
     let habits: [Habit]
     let todayKey: String
     @Binding var newHabitTitle: String
+    @Binding var newEntryType: HabitEntryType
     let metrics: HabitMetrics
     @ObservedObject var backend: HabitBackendStore
 
@@ -20,7 +22,10 @@ struct ContentViewScaffold: View {
 
     let showOnboarding: Bool
 
-    let onAddHabit: () -> Void
+    let stampNamespace: Namespace.ID
+    let stampStagingIds: Set<PersistentIdentifier>
+
+    let onAddHabit: (HabitEntryType) -> Void
     let onToggleHabit: (Habit) -> Void
     let onDeleteHabit: (Habit) -> Void
     let onSync: () -> Void
@@ -34,7 +39,12 @@ struct ContentViewScaffold: View {
                 .zIndex(-1)
 
             DoneHabitPillsBackground(
-                habits: habits.filter { $0.completedDayKeys.contains(todayKey) }
+                habits: habits.filter {
+                    $0.completedDayKeys.contains(todayKey)
+                        && !stampStagingIds.contains($0.persistentModelID)
+                },
+                todayKey: todayKey,
+                stampNamespace: stampNamespace
             )
             .zIndex(0)
 
@@ -42,8 +52,11 @@ struct ContentViewScaffold: View {
                 habits: habits,
                 todayKey: todayKey,
                 newHabitTitle: $newHabitTitle,
+                newEntryType: $newEntryType,
                 metrics: metrics,
                 clusters: backend.dashboard?.habitClusters ?? [],
+                stampNamespace: stampNamespace,
+                stampStagingIds: stampStagingIds,
                 onAddHabit: onAddHabit,
                 onToggleHabit: onToggleHabit,
                 onDeleteHabit: onDeleteHabit
@@ -93,7 +106,7 @@ struct ContentViewScaffold: View {
                     SettingsPanel(
                         metrics: metrics,
                         backend: backend,
-                        habits: habits,
+                        habits: habits.filter { $0.entryType == .habit },
                         onSync: onSync,
                         onFindMentor: onFindMentor,
                         onReminderChange: onReminderChange

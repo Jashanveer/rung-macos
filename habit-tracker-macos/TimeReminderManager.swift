@@ -78,7 +78,9 @@ final class TimeReminderManager: ObservableObject {
     ) -> [ReminderPlan] {
         HabitReminderWindow.allCases.compactMap { window in
             let assigned = habits.filter { habit in
-                !habit.isArchived && habit.reminderWindow == window.rawValue
+                !habit.isArchived
+                    && habit.entryType == .habit
+                    && habit.reminderWindow == window.rawValue
             }
 
             guard !assigned.isEmpty else { return nil }
