@@ -216,6 +216,8 @@ final class HabitBackendStore: ObservableObject {
     @Published private(set) var mentorRequestState:      RequestState<Void>                    = .idle
     @Published private(set) var messageRequestState:     RequestState<Void>                    = .idle
     @Published private(set) var friendRequestState:      RequestState<Void>                    = .idle
+    @Published private(set) var friendSearchRequestState: RequestState<[AccountabilityDashboard.FriendSummary]> = .idle
+    @Published private(set) var friendSearchResults: [AccountabilityDashboard.FriendSummary] = []
     @Published private(set) var streakFreezeRequestState: RequestState<Void>                   = .idle
     @Published private(set) var streamRequestState:      RequestState<Void>                    = .idle
     @Published private(set) var liveMessagesByMatch:     [Int64: [AccountabilityDashboard.Message]] = [:]
@@ -637,12 +639,37 @@ final class HabitBackendStore: ObservableObject {
             await syncSessionFromClient()
             await responseCache.invalidateDashboard()
             applyDashboardUpdate(value)
-            statusMessage = "Friend added"
+            friendSearchResults.removeAll { $0.userId == userID }
+            statusMessage = "Following"
             errorMessage = nil
             friendRequestState = .success(())
         } catch {
             handleAuthenticatedRequestError(error)
             friendRequestState = .failure(error.localizedDescription)
+        }
+        refreshSyncingState()
+    }
+
+    func searchFriends(query: String) async {
+        guard token != nil else { return }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            friendSearchResults = []
+            friendSearchRequestState = .idle
+            refreshSyncingState()
+            return
+        }
+
+        friendSearchRequestState = .loading; refreshSyncingState()
+        do {
+            let results = try await accountabilityRepository.searchFriends(query: trimmed)
+            await syncSessionFromClient()
+            friendSearchResults = results
+            friendSearchRequestState = .success(results)
+            errorMessage = nil
+        } catch {
+            handleAuthenticatedRequestError(error)
+            friendSearchRequestState = .failure(error.localizedDescription)
         }
         refreshSyncingState()
     }
@@ -826,6 +853,7 @@ final class HabitBackendStore: ObservableObject {
             || mentorRequestState.isLoading
             || messageRequestState.isLoading
             || friendRequestState.isLoading
+            || friendSearchRequestState.isLoading
             || streamRequestState.isLoading
             || streakFreezeRequestState.isLoading
     }
@@ -846,6 +874,7 @@ final class HabitBackendStore: ObservableObject {
     private func clearSession(errorMessage: String? = nil) {
         stopStream()
         token = nil; dashboard = nil; liveMessagesByMatch = [:]
+        friendSearchResults = []
         lastSentMessageAt = nil; lastSentMessageText = nil
         statusMessage = nil; self.errorMessage = errorMessage
         justRegistered = false
@@ -855,6 +884,7 @@ final class HabitBackendStore: ObservableObject {
         createHabitRequestState = .idle; updateHabitRequestState = .idle; checkUpdateRequestState = .idle
         deleteHabitRequestState = .idle; mentorRequestState = .idle
         messageRequestState = .idle; friendRequestState = .idle
+        friendSearchRequestState = .idle
         streakFreezeRequestState = .idle
         Task { await responseCache.invalidateAll() }
         refreshSyncingState()

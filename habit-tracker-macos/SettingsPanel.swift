@@ -23,7 +23,7 @@ struct SettingsPanel: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Social Circle")
                             .font(.headline)
-                        Text("Friends, consistency, small wins")
+                        Text("Following, consistency, small wins")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -39,7 +39,14 @@ struct SettingsPanel: View {
 
                 SocialFeedCard(dashboard: backend.dashboard)
 
-                FriendSuggestionsCard(dashboard: backend.dashboard) { userID in
+                FriendSuggestionsCard(
+                    dashboard: backend.dashboard,
+                    searchResults: backend.friendSearchResults,
+                    isSearching: backend.friendSearchRequestState.isLoading,
+                    onSearch: { query in
+                        await backend.searchFriends(query: query)
+                    }
+                ) { userID in
                     Task {
                         await backend.requestFriend(userID: userID)
                     }
@@ -219,7 +226,7 @@ struct SocialSummaryCard: View {
     let metrics: HabitMetrics
     let dashboard: AccountabilityDashboard?
 
-    private var friendCount: Int {
+    private var followingCount: Int {
         dashboard?.social?.friendCount ?? 0
     }
 
@@ -233,15 +240,15 @@ struct SocialSummaryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            PanelTitle(systemImage: "person.2.fill", title: "Friends")
+            PanelTitle(systemImage: "person.2.fill", title: "Following")
 
             HStack(spacing: 8) {
-                SocialMetric(value: "\(friendCount)", label: "Friends", tint: CleanShotTheme.accent)
+                SocialMetric(value: "\(followingCount)", label: "Following", tint: CleanShotTheme.accent)
                 SocialMetric(value: "\(updateCount)", label: "Updates", tint: CleanShotTheme.success)
                 SocialMetric(value: "\(consistencyPercent)%", label: "Your week", tint: CleanShotTheme.gold)
             }
 
-            Text("Share progress as small updates. Friends see consistency and today’s progress, not every habit detail.")
+            Text("Follow open profiles to see consistency and today’s progress, not every habit detail.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -284,7 +291,7 @@ struct SocialFeedCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            PanelTitle(systemImage: "chart.line.uptrend.xyaxis", title: "Friend updates")
+            PanelTitle(systemImage: "chart.line.uptrend.xyaxis", title: "Following updates")
 
             if !displayUpdates.isEmpty {
                 ForEach(displayUpdates) { update in
@@ -295,7 +302,7 @@ struct SocialFeedCard: View {
                     SocialPostRow(post: post)
                 }
             } else {
-                Text("No social updates yet. Add friends to start seeing activity.")
+                Text("No social updates yet. Follow people to start seeing activity.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -404,24 +411,65 @@ private extension AccountabilityDashboard.SocialPost {
 
 struct FriendSuggestionsCard: View {
     let dashboard: AccountabilityDashboard?
+    let searchResults: [AccountabilityDashboard.FriendSummary]
+    let isSearching: Bool
+    let onSearch: (String) async -> Void
     let onFollow: (Int64) -> Void
+    @State private var searchText = ""
 
     private var suggestions: [AccountabilityDashboard.FriendSummary] {
         guard let suggestions = dashboard?.social?.suggestions else { return [] }
         return Array(suggestions.prefix(3))
     }
 
+    private var displayPeople: [AccountabilityDashboard.FriendSummary] {
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return suggestions
+        }
+        return searchResults
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             PanelTitle(systemImage: "person.badge.plus", title: "People to follow")
 
-            if suggestions.isEmpty {
-                Text("Friend suggestions appear after more people join or update their profiles.")
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Search people", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+                    .onSubmit {
+                        Task { await onSearch(searchText) }
+                    }
+                if isSearching {
+                    ProgressView()
+                        .scaleEffect(0.55)
+                        .frame(width: 16, height: 16)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .cleanShotSurface(
+                shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                level: .control
+            )
+            .task(id: searchText) {
+                let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard query.count >= 2 || query.isEmpty else { return }
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled else { return }
+                await onSearch(query)
+            }
+
+            if displayPeople.isEmpty {
+                Text(emptyMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(suggestions) { friend in
+                ForEach(displayPeople) { friend in
                     FriendSuggestionRow(friend: friend, onFollow: onFollow)
                 }
             }
@@ -432,6 +480,12 @@ struct FriendSuggestionsCard: View {
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
         )
+    }
+
+    private var emptyMessage: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Suggestions use shared goals, consistency, people followed by your follows, and recent progress."
+            : "No open profiles match that search."
     }
 }
 

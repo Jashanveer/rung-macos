@@ -590,7 +590,14 @@ struct AccountabilityRepository {
     }
 
     func requestFriend(friendUserID: Int64) async throws -> AccountabilityDashboard {
-        try await client.authorizedRequest(path: "/api/accountability/friends/\(friendUserID)", method: "POST")
+        try await client.authorizedRequest(path: "/api/accountability/follows/\(friendUserID)", method: "POST")
+    }
+
+    func searchFriends(query: String) async throws -> [AccountabilityDashboard.FriendSummary] {
+        var components = URLComponents()
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        let queryString = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+        return try await client.authorizedRequest(path: "/api/accountability/follows/search\(queryString)", method: "GET")
     }
 
     func sendMenteeMessage(matchId: Int64, message: String) async throws -> AccountabilityDashboard {
