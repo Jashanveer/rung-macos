@@ -181,6 +181,7 @@ struct ContentView: View {
                 let remoteTasks = try await tasksResponse
                 let remote = remoteHabits + remoteTasks
                 applyReconcile(SyncEngine.reconcile(local: habits, remote: remote))
+                handleOverdueTasks()
                 saveAndRefreshWidgets()
                 backend.statusMessage = "Synced with \(BackendEnvironment.displayHost)"
                 backend.errorMessage  = nil
@@ -425,6 +426,26 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Overdue task enforcement
+
+    private func handleOverdueTasks() {
+        let overdue = habits.filter { $0.entryType == .task && $0.isOverdue() }
+        guard !overdue.isEmpty else { return }
+        for task in overdue {
+            let backendId = task.backendId
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                modelContext.delete(task)
+            }
+            guard let backendId, backend.isAuthenticated else { continue }
+            Task {
+                try? await backend.deleteTask(taskID: backendId)
+            }
+        }
+        saveAndRefreshWidgets()
+        let count = overdue.count
+        backend.statusMessage = "\(count) overdue \(count == 1 ? "task" : "tasks") removed — your consistency score reflects the miss"
+    }
+
     // MARK: - Archive habits / delete tasks
 
     private func archiveHabit(_ habit: Habit) {
@@ -529,7 +550,9 @@ struct ContentView: View {
             modelContext.insert(habit)
         }
         UserDefaults.standard.set(true, forKey: onboardingKey)
-        hasCompletedOnboarding = true
+        withAnimation(.easeOut(duration: 0.3)) {
+            hasCompletedOnboarding = true
+        }
         saveAndRefreshWidgets()
         refreshTimeReminders()
         if !habitTitles.isEmpty { syncWithBackend() }

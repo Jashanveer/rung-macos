@@ -278,7 +278,9 @@ final class HabitBackendStore: ObservableObject {
 
     // MARK: Private
 
-    private let sessionKey = "habitTracker.localhost.session.v1"
+    // Legacy UserDefaults keys — read once at launch and migrated to the Keychain.
+    private static let legacySessionKey = "habitTracker.localhost.session.v1"
+    private static let legacyTokenKey   = "habitTracker.localhost.token"
     private let apiClient: BackendAPIClient
     private let authRepository: AuthRepository
     private let habitRepository: HabitRepository
@@ -312,7 +314,7 @@ final class HabitBackendStore: ObservableObject {
     }
 
     init() {
-        let session = Self.loadSession(from: "habitTracker.localhost.session.v1")
+        let session = Self.loadSession()
         token = session?.accessToken
 
         let client = BackendAPIClient(initialSession: session)
@@ -403,10 +405,13 @@ final class HabitBackendStore: ObservableObject {
             let _: EmptyResponse = try await apiClient.authorizedRequest(
                 path: "/api/users/me", method: "DELETE"
             )
+            errorMessage = nil
+            statusMessage = "Account deleted from server."
+            signOut()
         } catch {
-            // Best-effort — clear locally even if network fails
+            errorMessage = "Couldn’t delete account on server: \(error.localizedDescription)"
+            statusMessage = nil
         }
-        signOut()
     }
 
     private struct EmptyResponse: Decodable {}
@@ -917,13 +922,17 @@ final class HabitBackendStore: ObservableObject {
 
     private func applySession(_ session: BackendSession) {
         token = session.accessToken
-        Self.saveSession(session, key: sessionKey)
+        KeychainSessionStore.save(session)
     }
 
     private func syncSessionFromClient() async {
         let session = await apiClient.currentSession()
         token = session?.accessToken
-        Self.saveSession(session, key: sessionKey)
+        if let session {
+            KeychainSessionStore.save(session)
+        } else {
+            KeychainSessionStore.delete()
+        }
     }
 
     private func clearSession(errorMessage: String? = nil) {
@@ -934,8 +943,9 @@ final class HabitBackendStore: ObservableObject {
         lastSentMessageAt = nil; lastSentMessageText = nil
         statusMessage = nil; self.errorMessage = errorMessage
         justRegistered = false
-        Self.saveSession(nil, key: sessionKey)
-        UserDefaults.standard.removeObject(forKey: "habitTracker.localhost.token")
+        KeychainSessionStore.delete()
+        UserDefaults.standard.removeObject(forKey: Self.legacySessionKey)
+        UserDefaults.standard.removeObject(forKey: Self.legacyTokenKey)
         authRequestState = .idle; habitListRequestState = .idle; dashboardRequestState = .idle
         createHabitRequestState = .idle; updateHabitRequestState = .idle; checkUpdateRequestState = .idle
         deleteHabitRequestState = .idle; mentorRequestState = .idle
@@ -946,21 +956,27 @@ final class HabitBackendStore: ObservableObject {
         refreshSyncingState()
     }
 
-    private static func saveSession(_ session: BackendSession?, key: String) {
-        if let session, let data = try? JSONEncoder().encode(session) {
-            UserDefaults.standard.set(data, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
+    /// Returns the current session, migrating any UserDefaults-era payload into the Keychain.
+    private static func loadSession() -> BackendSession? {
+        if let keychained = KeychainSessionStore.load() {
+            return keychained
         }
-    }
 
-    private static func loadSession(from key: String) -> BackendSession? {
+        // One-time migration from UserDefaults.
         if
-            let data = UserDefaults.standard.data(forKey: key),
+            let data = UserDefaults.standard.data(forKey: legacySessionKey),
             let session = try? JSONDecoder().decode(BackendSession.self, from: data)
-        { return session }
-        if let legacy = UserDefaults.standard.string(forKey: "habitTracker.localhost.token") {
-            return BackendSession.fromLegacyToken(legacy)
+        {
+            KeychainSessionStore.save(session)
+            UserDefaults.standard.removeObject(forKey: legacySessionKey)
+            UserDefaults.standard.removeObject(forKey: legacyTokenKey)
+            return session
+        }
+        if let legacy = UserDefaults.standard.string(forKey: legacyTokenKey) {
+            let session = BackendSession.fromLegacyToken(legacy)
+            KeychainSessionStore.save(session)
+            UserDefaults.standard.removeObject(forKey: legacyTokenKey)
+            return session
         }
         return nil
     }

@@ -438,8 +438,6 @@ struct AuthGateView: View {
 
     var body: some View {
         ZStack {
-            FloatingHabitBackground()
-
             cardView
                 .frame(width: cardWidth)
                 .padding(.horizontal, 32)
@@ -598,10 +596,9 @@ struct AuthGateView: View {
     // MARK: Sub-components
 
     private var appIcon: some View {
-        ConstructingAppIconView(progress: 1)
-            .frame(width: 60, height: 60)
+        FormaIconView(size: 60)
             .matchedGeometryEffect(id: "auth-app-icon", in: iconNamespace)
-            .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.45 : 0.18), radius: 14, y: 8)
+            .shadow(color: Color.formaBlue.opacity(colorScheme == .dark ? 0.45 : 0.28), radius: 18, y: 8)
     }
 
     private var tabSwitcher: some View {

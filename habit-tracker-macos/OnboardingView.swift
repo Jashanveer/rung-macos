@@ -14,6 +14,8 @@ struct OnboardingView: View {
 
     @State private var habitInput = ""
     @State private var stagedHabits: [String] = []
+    @State private var isExiting = false
+    @State private var pendingHabits: [String] = []
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -36,8 +38,25 @@ struct OnboardingView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 600)
             }
+
+            if isExiting {
+                FormaTransition(
+                    onCovered: { onComplete(pendingHabits) },
+                    onComplete: {}
+                )
+                .transition(.opacity)
+            }
         }
         .onAppear { startSequence() }
+    }
+
+    private func beginExit() {
+        guard !isExiting else { return }
+        pendingHabits = stagedHabits
+        fieldFocused = false
+        withAnimation(.smooth(duration: 0.2)) {
+            isExiting = true
+        }
     }
 
     // MARK: - Sections
@@ -157,7 +176,7 @@ struct OnboardingView: View {
                 .frame(maxWidth: 520)
             }
 
-            Button { onComplete(stagedHabits) } label: {
+            Button(action: beginExit) {
                 Text(stagedHabits.isEmpty ? "Skip for now" : "Let's start →")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(maxWidth: .infinity)
@@ -165,6 +184,7 @@ struct OnboardingView: View {
             }
             .buttonStyle(PrimaryCapsuleButtonStyle())
             .frame(maxWidth: 520)
+            .disabled(isExiting)
             .animation(.easeOut(duration: 0.15), value: stagedHabits.isEmpty)
         }
         .opacity(inputVisible ? 1 : 0)

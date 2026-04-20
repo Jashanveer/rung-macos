@@ -1,7 +1,18 @@
 import Foundation
 
 enum BackendEnvironment {
-    nonisolated static let baseURL = URL(string: "http://127.0.0.1:8080")!
+    // Resolved from the `BackendBaseURL` Info.plist key (set via
+    // INFOPLIST_KEY_BackendBaseURL in build settings). Falls back to the
+    // local dev server so unit tests and Previews still work.
+    nonisolated static let baseURL: URL = {
+        let fallback = URL(string: "http://127.0.0.1:8080")!
+        guard
+            let raw = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
+            !raw.trimmingCharacters(in: .whitespaces).isEmpty,
+            let url = URL(string: raw.trimmingCharacters(in: .whitespaces))
+        else { return fallback }
+        return url
+    }()
 
     nonisolated static var displayHost: String {
         guard let host = baseURL.host else { return baseURL.absoluteString }

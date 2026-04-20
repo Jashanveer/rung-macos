@@ -1158,6 +1158,198 @@ struct DoneHabitPillsBackground: View {
     private func fract(_ v: Double) -> Double { v - floor(v) }
 }
 
+// MARK: - Friends Consistency Leaderboard
+
+struct FriendsLeaderboardPill: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let dashboard: AccountabilityDashboard
+
+    @State private var isExpanded = false
+
+    private struct LeaderEntry: Identifiable {
+        let id: Int64
+        let displayName: String
+        let consistency: Int
+        let isCurrentUser: Bool
+    }
+
+    private var entries: [LeaderEntry] {
+        var result: [LeaderEntry] = [
+            LeaderEntry(
+                id: -1,
+                displayName: dashboard.profile.displayName,
+                consistency: dashboard.level.weeklyConsistencyPercent,
+                isCurrentUser: true
+            )
+        ]
+        let friends = (dashboard.social?.updates ?? []).map {
+            LeaderEntry(id: $0.userId, displayName: $0.displayName, consistency: $0.weeklyConsistencyPercent, isCurrentUser: false)
+        }
+        result.append(contentsOf: friends)
+        return result.sorted { $0.consistency > $1.consistency }
+    }
+
+    private var hasFriends: Bool { !(dashboard.social?.updates ?? []).isEmpty }
+    private var currentUserRank: Int {
+        (entries.firstIndex { $0.isCurrentUser } ?? 0) + 1
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            pillButton
+            if isExpanded {
+                leaderboardDropdown
+                    .transition(.scale(scale: 0.96, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: isExpanded)
+    }
+
+    private var pillButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "trophy.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(CleanShotTheme.gold)
+                Text(hasFriends ? "Rank #\(currentUserRank)" : "Friends")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.primary)
+                if hasFriends {
+                    Text("\(dashboard.level.weeklyConsistencyPercent)%")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(CleanShotTheme.success)
+                }
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [CleanShotTheme.gold.opacity(0.35), CleanShotTheme.gold.opacity(0.10)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.75
+                    )
+            )
+            .shadow(color: .black.opacity(0.07), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var leaderboardDropdown: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if entries.count <= 1 {
+                noFriendsPrompt
+            } else {
+                ForEach(Array(entries.prefix(5).enumerated()), id: \.element.id) { index, entry in
+                    leaderRow(rank: index + 1, entry: entry)
+                    if index < min(entries.count, 5) - 1 {
+                        Divider().opacity(0.3).padding(.horizontal, 10)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 8)
+        .frame(minWidth: 220)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(CleanShotTheme.stroke(for: colorScheme), lineWidth: 0.75)
+        )
+        .shadow(color: .black.opacity(0.10), radius: 10, x: 0, y: 4)
+        .padding(.top, 4)
+    }
+
+    private func leaderRow(rank: Int, entry: LeaderEntry) -> some View {
+        HStack(spacing: 8) {
+            Text("\(rank)")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(rankColor(rank))
+                .frame(width: 16)
+
+            if rank <= 3 {
+                Image(systemName: rankMedal(rank))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(rankColor(rank))
+                    .frame(width: 14)
+            } else {
+                Color.clear.frame(width: 14)
+            }
+
+            Text(entry.isCurrentUser ? "You" : entry.displayName)
+                .font(.system(size: 12, weight: entry.isCurrentUser ? .semibold : .medium))
+                .foregroundStyle(entry.isCurrentUser ? CleanShotTheme.accent : .primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.12))
+                    .frame(width: 52, height: 4)
+                Capsule()
+                    .fill(entry.isCurrentUser ? CleanShotTheme.accent : CleanShotTheme.success)
+                    .frame(width: 52 * CGFloat(entry.consistency) / 100.0, height: 4)
+            }
+
+            Text("\(entry.consistency)%")
+                .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(
+            entry.isCurrentUser
+                ? CleanShotTheme.accent.opacity(colorScheme == .dark ? 0.08 : 0.05)
+                : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+    }
+
+    private var noFriendsPrompt: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "person.badge.plus")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Text("Add friends to compare consistency")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private func rankColor(_ rank: Int) -> Color {
+        switch rank {
+        case 1: return CleanShotTheme.gold
+        case 2: return Color.gray.opacity(0.85)
+        case 3: return CleanShotTheme.warning.opacity(0.8)
+        default: return .secondary
+        }
+    }
+
+    private func rankMedal(_ rank: Int) -> String {
+        switch rank {
+        case 1: return "trophy.fill"
+        case 2: return "star.fill"
+        case 3: return "flame.fill"
+        default: return "circle"
+        }
+    }
+}
+
+// MARK: - Ambient done-habit stamps
+
 private struct AmbientStamp: View {
     let habit: Habit
     let todayKey: String

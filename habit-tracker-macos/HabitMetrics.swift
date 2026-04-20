@@ -130,13 +130,13 @@ struct HabitMetrics {
     }
 
     private static func weeklyConsistency(for habits: [Habit], todayKey: String) -> Double {
-        guard !habits.isEmpty else { return 0 }
-
+        let onlyHabits = habits.filter { $0.entryType == .habit }
+        guard !onlyHabits.isEmpty else { return 0 }
         let recentKeys = DateKey.recentDays(count: 7, endingAt: DateKey.date(from: todayKey)).map(\.key)
         let completed = recentKeys.reduce(0) { total, key in
-            total + habits.filter { $0.completedDayKeys.contains(key) }.count
+            total + onlyHabits.filter { $0.completedDayKeys.contains(key) }.count
         }
-        return min(Double(completed) / Double(habits.count * recentKeys.count), 1)
+        return min(Double(completed) / Double(onlyHabits.count * recentKeys.count), 1)
     }
 
     private static func habitHistoryDays(for habits: [Habit], todayKey: String) -> Int {
@@ -262,20 +262,16 @@ struct HabitMetrics {
     private static func isEntryActive(_ habit: Habit, on dayKey: String) -> Bool {
         let calendar = Calendar.current
         let day = calendar.startOfDay(for: DateKey.date(from: dayKey))
-        guard calendar.startOfDay(for: habit.createdAt) <= day else {
-            return false
-        }
-
-        guard habit.entryType == .task else {
-            return true
-        }
+        guard calendar.startOfDay(for: habit.createdAt) <= day else { return false }
+        guard habit.entryType == .task else { return true }
 
         let completedDates = habit.completedDayKeys.map { calendar.startOfDay(for: DateKey.date(from: $0)) }
-        guard let firstCompletedDate = completedDates.min() else {
-            return true
+        if let firstCompletedDate = completedDates.min() {
+            return firstCompletedDate >= day
         }
-
-        return firstCompletedDate >= day
+        // Uncompleted task: active only today and forward — not on historical days
+        // so open tasks don't retroactively block past perfect days.
+        return day >= calendar.startOfDay(for: Date())
     }
 
     private static func achievementMedals(for habits: [Habit], perfectDays: [String], totalChecks: Int, bestPerfectStreak: Int) -> [Medal] {

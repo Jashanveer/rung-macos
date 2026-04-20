@@ -204,6 +204,12 @@ struct ContentViewScaffold: View {
                     .zIndex(100)
             }
         }
+        .overlay(alignment: .top) {
+            if backend.isAuthenticated, let dashboard = backend.dashboard {
+                FriendsLeaderboardPill(dashboard: dashboard)
+                    .padding(.top, 12)
+            }
+        }
         .overlay(alignment: .topTrailing) {
             ConnectionStatusPill(backend: backend, onSync: onSync)
                 .padding(.top, 12)
@@ -217,11 +223,11 @@ struct ContentViewScaffold: View {
             }
         }
         .overlay {
-            AuthExperienceOverlay(
+            FormaIntroView(
                 backend: backend,
-                onAuthenticated: onSync
+                onReady: onSync
             )
-            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            .transition(.opacity)
             .zIndex(200)
         }
         .overlay(alignment: .bottom) {
