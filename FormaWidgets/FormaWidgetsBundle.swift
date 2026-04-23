@@ -10,11 +10,9 @@ struct FormaWidgetsBundle: WidgetBundle {
         ChecklistWidget()
         WeeklyWidget()
         FriendsProgressWidget()
-        MentorDashboardWidget()
         MenteeViewWidget()
         DashboardWidget()
         LeaderboardWidget()
-        AccountabilityPanelWidget()
         CommandCenterWidget()
     }
 }
