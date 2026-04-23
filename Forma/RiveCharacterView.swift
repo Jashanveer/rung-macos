@@ -101,6 +101,7 @@ struct MentorCharacterView: View {
                     messages: messages,
                     messageText: $messageText,
                     inlineError: inlineChatError,
+                    currentUserId: backend.currentUserId,
                     onSend: sendMessage,
                     onClose: {
                         closeChat()
@@ -302,51 +303,79 @@ struct MenteeCharacterView: View {
 
         let updates = dashboard.social?.updates ?? []
         let suggestions = dashboard.social?.suggestions ?? []
+        let myName = dashboard.profile.displayName
 
-        // 1. Prefer weekly-challenge leaderboard (perfect-day score).
-        let entries = dashboard.weeklyChallenge.leaderboard
-        if !entries.isEmpty {
-            let first = entries.first
-            let target: (entry: AccountabilityDashboard.LeaderboardEntry, rank: Int)?
-            if first?.currentUser == true, entries.count >= 2 {
-                target = (entries[1], 2)
-            } else if let first, !first.currentUser {
-                target = (first, 1)
-            } else {
-                target = nil
-            }
-            if let target {
-                let match = updates.first { $0.displayName == target.entry.displayName }
-                let suggestionMatch = suggestions.first { $0.displayName == target.entry.displayName }
-                return TopFriendSnapshot(
-                    displayName: target.entry.displayName,
-                    perfectDays: target.entry.score,
-                    weeklyConsistencyPercent: match?.weeklyConsistencyPercent ?? suggestionMatch?.weeklyConsistencyPercent,
-                    progressPercent: match?.progressPercent ?? suggestionMatch?.progressPercent,
-                    rank: target.rank
-                )
-            }
+        // Build the same consistency-ranked list the dashboard pill renders so
+        // the rival's rank stays in lock-step with what the user sees there.
+        // The backend's weekly-challenge leaderboard alone can't be trusted —
+        // it sometimes omits the current user (or fails to set `currentUser`),
+        // which made jay show up as "Rank #1" even when avneet held the top spot.
+        struct Ranked {
+            let displayName: String
+            let consistency: Int
+            let progress: Int
+            let isCurrentUser: Bool
         }
 
-        // 2. Fall back to the same feed the leaderboard pill uses —
-        // `social.updates` sorted by weekly consistency, then today's progress.
-        let sortedUpdates = updates.sorted {
-            if $0.weeklyConsistencyPercent != $1.weeklyConsistencyPercent {
-                return $0.weeklyConsistencyPercent > $1.weeklyConsistencyPercent
-            }
-            return $0.progressPercent > $1.progressPercent
-        }
-        if let top = sortedUpdates.first {
-            return TopFriendSnapshot(
-                displayName: top.displayName,
-                perfectDays: 0,
-                weeklyConsistencyPercent: top.weeklyConsistencyPercent,
-                progressPercent: top.progressPercent,
-                rank: 1
+        var ranked: [Ranked] = [
+            Ranked(
+                displayName: myName,
+                consistency: dashboard.level.weeklyConsistencyPercent,
+                progress: 0,
+                isCurrentUser: true
             )
+        ]
+        ranked.append(contentsOf: updates.map {
+            Ranked(
+                displayName: $0.displayName,
+                consistency: $0.weeklyConsistencyPercent,
+                progress: $0.progressPercent,
+                isCurrentUser: $0.displayName == myName
+            )
+        })
+
+        let sorted = ranked.sorted {
+            if $0.consistency != $1.consistency {
+                return $0.consistency > $1.consistency
+            }
+            // Tie-break: keep the current user above ties so the rival shown
+            // is genuinely ranked behind them, not co-leading.
+            if $0.isCurrentUser != $1.isCurrentUser {
+                return $0.isCurrentUser
+            }
+            return $0.displayName < $1.displayName
         }
 
-        return nil
+        guard let rivalIndex = sorted.firstIndex(where: { !$0.isCurrentUser }) else {
+            return nil
+        }
+        let rival = sorted[rivalIndex]
+        let rivalRank = rivalIndex + 1
+
+        // "Perfect days" surfaces the rival's year-to-date count. The backend
+        // exposes this on `SocialActivity.yearPerfectDays` as of the
+        // year-perfect-days API. Older builds (and offline fallbacks) lack
+        // the field — for those we extrapolate from 7-day consistency. Floor
+        // at 1 if the rival clearly completed today.
+        let updateMatch = updates.first { $0.displayName == rival.displayName }
+        let suggestionMatch = suggestions.first { $0.displayName == rival.displayName }
+        let backendCount = updateMatch?.yearPerfectDays ?? 0
+        let perfectDays: Int
+        if backendCount > 0 {
+            perfectDays = backendCount
+        } else {
+            let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
+            let estimate = Int((Double(rival.consistency) / 100.0 * Double(dayOfYear)).rounded())
+            perfectDays = max(estimate, rival.progress >= 100 ? 1 : 0)
+        }
+
+        return TopFriendSnapshot(
+            displayName: rival.displayName,
+            perfectDays: perfectDays,
+            weeklyConsistencyPercent: rival.consistency,
+            progressPercent: suggestionMatch?.progressPercent ?? rival.progress,
+            rank: rivalRank
+        )
     }
 
     private let bubbleHeight: CGFloat = 252

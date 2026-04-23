@@ -8,8 +8,12 @@ struct StatsSidebar: View {
     @ObservedObject var backend: HabitBackendStore
     let todayKey: String
 
-    private var level: Int { (dashboard?.rewards.xp ?? metrics.totalChecks) / 100 + 1 }
-    private var xp: Int { (dashboard?.rewards.xp ?? metrics.totalChecks) % 100 }
+    private var rawXP: Int { dashboard?.rewards.xp ?? metrics.totalChecks }
+    private var adjustedXP: Int {
+        OverduePenaltyStore.adjustedXP(rawXP, for: backend.currentUserId)
+    }
+    private var level: Int { adjustedXP / 100 + 1 }
+    private var xp: Int { adjustedXP % 100 }
     private var percent: Int { Int((metrics.progressToday * 100).rounded()) }
 
     var body: some View {
@@ -67,7 +71,7 @@ struct StatsSidebar: View {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                     StatCard(icon: "checklist", label: "Habits", value: "\(metrics.totalHabits)", tint: CleanShotTheme.accent)
                     StatCard(icon: "checkmark.circle.fill", label: "Done", value: "\(metrics.doneToday)", tint: CleanShotTheme.success)
-                    StatCard(icon: "bolt.fill", label: "XP", value: "\(dashboard?.rewards.xp ?? metrics.xp)", tint: CleanShotTheme.violet)
+                    StatCard(icon: "bolt.fill", label: "XP", value: "\(OverduePenaltyStore.adjustedXP(dashboard?.rewards.xp ?? metrics.xp, for: backend.currentUserId))", tint: CleanShotTheme.violet)
                     StatCard(icon: "shield.fill", label: "Freezes", value: "\(dashboard?.rewards.freezesAvailable ?? 0)", tint: Color.cyan)
                 }
 

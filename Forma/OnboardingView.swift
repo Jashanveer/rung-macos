@@ -114,6 +114,8 @@ struct OnboardingView: View {
             }
             .fixedSize(horizontal: false, vertical: true)
 
+            permanenceNotice
+
             HStack(spacing: 8) {
                 TextField("E.g. Morning run, read 10 pages...", text: $habitInput)
                     .textFieldStyle(.plain)
@@ -215,6 +217,35 @@ struct OnboardingView: View {
             try? await Task.sleep(for: .milliseconds(28))
         }
         withAnimation { quoteComplete = true }
+    }
+
+    private var permanenceNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(CleanShotTheme.accent)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Habits are permanent")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("Once you commit to a habit it stays on your list — no deleting later. Pick what you'll actually do.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(CleanShotTheme.accent.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(CleanShotTheme.accent.opacity(0.22), lineWidth: 0.75)
+        )
+        .frame(maxWidth: 520)
     }
 
     private func addHabit() {

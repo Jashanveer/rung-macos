@@ -244,13 +244,37 @@ actor BackendAPIClient {
 
     func refreshSession() async throws -> BackendSession {
         guard let rt = session?.refreshToken, !rt.isEmpty else {
+            await Self.notifySessionInvalidated()
             throw HabitBackendError.notAuthenticated
         }
-        let tokens: BackendAuthTokens = try await request(
-            path: "/api/auth/refresh", method: "POST",
-            body: RefreshRequest(refreshToken: rt)
-        )
-        let s = BackendSession.fromAuthTokens(tokens); session = s; return s
+        do {
+            let tokens: BackendAuthTokens = try await request(
+                path: "/api/auth/refresh", method: "POST",
+                body: RefreshRequest(refreshToken: rt)
+            )
+            let s = BackendSession.fromAuthTokens(tokens); session = s; return s
+        } catch HabitBackendError.notAuthenticated {
+            // The refresh token itself is bad — the only recovery is for the
+            // user to sign in again. Drop the local session and broadcast so
+            // `HabitBackendStore` can sign out automatically.
+            session = nil
+            await Self.notifySessionInvalidated()
+            throw HabitBackendError.notAuthenticated
+        } catch HabitBackendError.server(let msg) where msg.lowercased().contains("unauth") || msg.lowercased().contains("invalid") {
+            session = nil
+            await Self.notifySessionInvalidated()
+            throw HabitBackendError.notAuthenticated
+        }
+    }
+
+    /// Posted whenever the refresh token can't produce a valid session, so the
+    /// store can drop local state and send the user back to the sign-in screen.
+    static let sessionInvalidatedNotification = Notification.Name("BackendAPIClient.sessionInvalidated")
+
+    private static func notifySessionInvalidated() async {
+        await MainActor.run {
+            NotificationCenter.default.post(name: sessionInvalidatedNotification, object: nil)
+        }
     }
 
     /// Invalidates the refresh token server-side. Best-effort — never throws.
@@ -368,6 +392,17 @@ actor BackendAPIClient {
             }
             if Response.self == EmptyResponse.self, let empty = EmptyResponse() as? Response {
                 return empty
+            }
+            // 204 No Content (or any 2xx with empty body) — fall back to a
+            // synthesised "{}" payload so callers that pass their own empty
+            // Decodable type still succeed instead of failing with
+            // `invalidResponse`. Without this, every caller that defines its
+            // own `EmptyResponse` to discard the body slips past the metatype
+            // check above and trips JSON decode on zero bytes.
+            if data.isEmpty || http.statusCode == 204 {
+                if let synthesised = try? decoder.decode(Response.self, from: Data("{}".utf8)) {
+                    return synthesised
+                }
             }
             return try decoder.decode(Response.self, from: data)
         } catch let error as HabitBackendError {

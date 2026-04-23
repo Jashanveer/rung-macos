@@ -30,6 +30,9 @@ struct CenterPanel: View {
             return !isDone || stampStagingIds.contains(habit.persistentModelID)
         }
     }
+    private var hasOverdueTask: Bool {
+        habits.contains { $0.entryType == .task && $0.isOverdue() }
+    }
     private var isEmpty: Bool { habits.isEmpty }
     private var allDoneToday: Bool { !habits.isEmpty && pendingHabits.isEmpty }
     private var isCompact: Bool { !isEmpty && !allDoneToday }
@@ -45,6 +48,7 @@ struct CenterPanel: View {
             AddHabitBar(
                 newHabitTitle: $newHabitTitle,
                 selectedType: $newEntryType,
+                hasOverdueTask: hasOverdueTask,
                 onAddHabit: onAddHabit
             )
                 .frame(maxWidth: 520)

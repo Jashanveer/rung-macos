@@ -1,0 +1,9 @@
+# Local AI / editor tool configs
+.claude/
+.cursorrules
+.windsurfrules
+.mcp.json
+GEMINI.md
+
+# macOS
+.DS_Store

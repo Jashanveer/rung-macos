@@ -73,6 +73,11 @@ final class Habit {
     /// History is preserved locally so streaks remain intact.
     var isArchived: Bool
 
+    /// True once the overdue penalty (freeze consumption or XP dock) has been
+    /// applied for this task. Prevents double-penalising the same overdue task
+    /// across sync cycles.
+    var overduePenaltyApplied: Bool = false
+
     /// Backward-compatible entry kind accessor.
     /// Older stores may contain missing/invalid values; those fall back to `.habit`.
     var entryType: HabitEntryType {
@@ -96,7 +101,8 @@ final class Habit {
         pendingCheckIsDone: Bool = false,
         reminderWindow: String? = nil,
         dueAt: Date? = nil,
-        isArchived: Bool = false
+        isArchived: Bool = false,
+        overduePenaltyApplied: Bool = false
     ) {
         self.title = title
         self.entryTypeRawValue = entryType.rawValue
@@ -110,6 +116,7 @@ final class Habit {
         self.reminderWindow = reminderWindow
         self.dueAt = dueAt
         self.isArchived = isArchived
+        self.overduePenaltyApplied = overduePenaltyApplied
     }
 
     // MARK: - Convenience
@@ -120,8 +127,11 @@ final class Habit {
     }
 
     /// Task is past its due date (and not yet done). Habits ignore this.
+    /// Compared by calendar day: a task due today is not overdue until tomorrow.
+    /// Tasks without a due date are never overdue.
     func isOverdue(now: Date = Date()) -> Bool {
         guard entryType == .task, !isTaskCompleted, let due = dueAt else { return false }
-        return due < now
+        let calendar = Calendar.current
+        return calendar.startOfDay(for: due) < calendar.startOfDay(for: now)
     }
 }

@@ -21,6 +21,7 @@ struct TodayHeader: View {
 struct AddHabitBar: View {
     @Binding var newHabitTitle: String
     @Binding var selectedType: HabitEntryType
+    var hasOverdueTask: Bool = false
     let onAddHabit: (HabitEntryType, Date?) -> Void
 
     @State private var isHovered = false
@@ -28,6 +29,10 @@ struct AddHabitBar: View {
     @State private var dueAt: Date? = nil
     @State private var showDuePicker = false
     @FocusState private var fieldFocused: Bool
+
+    private var isBlockedByOverdue: Bool {
+        selectedType == .task && hasOverdueTask
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -72,7 +77,13 @@ struct AddHabitBar: View {
             .animation(.smooth(duration: 0.16), value: fieldFocused)
             .onHover { isHovered = $0 }
 
-            if showValidationError {
+            if isBlockedByOverdue {
+                Label("Finish your overdue task before adding a new one.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(CleanShotTheme.danger)
+                    .padding(.leading, 16)
+                    .transition(.opacity.combined(with: .offset(y: -4)))
+            } else if showValidationError {
                 Text("Give your \(selectedType.title.lowercased()) a real name — something you'd actually say out loud.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -81,6 +92,7 @@ struct AddHabitBar: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: showValidationError)
+        .animation(.easeOut(duration: 0.2), value: isBlockedByOverdue)
     }
 
     private var placeholderText: String {
@@ -88,6 +100,7 @@ struct AddHabitBar: View {
     }
 
     private func attemptAdd() {
+        guard !isBlockedByOverdue else { return }
         guard isLikelyMeaningful(newHabitTitle) else {
             withAnimation { showValidationError = true }
             return

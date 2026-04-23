@@ -227,6 +227,28 @@ struct AccountabilityDashboard: Decodable {
         let id: String; let userId: Int64; let displayName: String
         let message: String; let weeklyConsistencyPercent: Int
         let progressPercent: Int; let kind: String; let createdAt: String?
+        /// Number of perfect days the friend has accumulated this calendar
+        /// year. Backwards-compatible: defaults to 0 if the server doesn't
+        /// supply it (older builds).
+        let yearPerfectDays: Int
+
+        private enum CodingKeys: String, CodingKey {
+            case id, userId, displayName, message, weeklyConsistencyPercent
+            case progressPercent, kind, createdAt, yearPerfectDays
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id                       = try c.decode(String.self,  forKey: .id)
+            userId                   = try c.decode(Int64.self,   forKey: .userId)
+            displayName              = try c.decode(String.self,  forKey: .displayName)
+            message                  = try c.decode(String.self,  forKey: .message)
+            weeklyConsistencyPercent = try c.decode(Int.self,     forKey: .weeklyConsistencyPercent)
+            progressPercent          = try c.decode(Int.self,     forKey: .progressPercent)
+            kind                     = try c.decode(String.self,  forKey: .kind)
+            createdAt                = try c.decodeIfPresent(String.self, forKey: .createdAt)
+            yearPerfectDays          = try c.decodeIfPresent(Int.self, forKey: .yearPerfectDays) ?? 0
+        }
     }
     struct FriendSummary: Decodable, Identifiable {
         var id: Int64 { userId }
@@ -346,6 +368,21 @@ final class HabitBackendStore: ObservableObject {
                     }
                 }
             }
+
+        // Auto-sign-out when the refresh token is rejected — `BackendAPIClient`
+        // posts this once it has cleared its own session and confirmed there
+        // is no recovery without a fresh login.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSessionInvalidatedNotification),
+            name: BackendAPIClient.sessionInvalidatedNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleSessionInvalidatedNotification() {
+        guard isAuthenticated else { return }
+        clearSession(errorMessage: "Your session expired — please sign in again.")
     }
 
     /// Shown in place of raw URLSession errors when the device is offline.
