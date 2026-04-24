@@ -59,6 +59,51 @@ Act as a professional iOS/macOS developer at Apple. This app must feel and behav
 - Minimal imports: `SwiftUI`, `SwiftData`, `Foundation`, `FoundationModels`
 
 <!-- code-review-graph MCP tools -->
+## Verification + weekly targets
+
+Forma habits carry optional verification metadata so leaderboard scoring can
+distinguish HealthKit-confirmed completions from honor-system ones.
+
+**New `Habit` fields** (`Habit.swift`, all additive with defaults — pre-existing
+SwiftData stores lightweight-migrate silently):
+
+- `verificationTierRaw` / `verificationTier` — `.auto` / `.partial` / `.selfReport`
+- `verificationSourceRaw` / `verificationSource` — nil, HealthKit identifiers,
+  or `.screenTimeSocial` (iOS Family Controls, scaffolded)
+- `verificationParam` — threshold / activity-type code per source
+- `canonicalKey` — stable id into `CanonicalHabits.byKey` (e.g. `"run"`)
+- `weeklyTarget` — `nil` for daily habits; `N` for frequency habits like
+  "gym 5×/week" that hide from the list once the ISO-week count hits `N`
+- `localUUID` — stable per-habit UUID that `HabitCompletion.habitLocalId`
+  points to; lazily seeded by `ensureLocalUUID()` inside
+  `HabitBackendStore.verifyCompletion`
+
+**Related types**:
+
+- `HabitCompletion` (`HabitCompletion.swift`) — per-toggle evidence record
+- `VerificationService` (`VerificationService.swift`) — HKHealthStore actor;
+  `requestAuthorization()` on onboarding, `verify(...)` after each toggle
+- `CanonicalHabits` (`CanonicalHabits.swift`) — seed list of 20 verifiable
+  habits + `match(userTitle:)` fuzzy matcher
+
+**Where verification is wired**:
+
+- Onboarding (`OnboardingView.swift`) — two-phase flow: habit staging →
+  permissions step with HealthKit Enable button
+- Habit creation (`HabitViews.swift` → `AddHabitBar`) — after Add, shows an
+  inline confirmation card offering a frequency picker (Daily / 3× / 5× /
+  7× per week) and a verify-with-Apple-Health toggle when a canonical match
+  is found. Never auto-applied silently.
+- Toggle path (`ContentView.swift` → `toggleHabit`) — on done→true transitions
+  calls `backend.verifyCompletion(habit:dayKey:modelContext:)` fire-and-forget
+- Perfect-day math (`HabitMetrics.swift`) — uses `Habit.isSatisfied(on:)` so
+  frequency habits count rest days up to their `(7 - weeklyTarget)` budget
+  and only imperfect thereafter
+
+**Backend integration (Phase 2) is pending** — the client persists all
+verification fields locally but does not yet round-trip them through
+`POST /api/habits` or `POST /api/habits/{id}/verify`.
+
 ## MCP Tools: code-review-graph
 
 **IMPORTANT: This project has a knowledge graph. ALWAYS use the

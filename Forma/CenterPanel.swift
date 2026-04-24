@@ -15,7 +15,7 @@ struct CenterPanel: View {
     /// Today is protected by a streak freeze. When true the list renders every
     /// habit in its frozen (icy-blue) state and does not hide completed ones.
     var isFrozenToday: Bool = false
-    let onAddHabit: (HabitEntryType, Date?) -> Void
+    let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?) -> Void
     let onToggleHabit: (Habit) -> Void
     let onDeleteHabit: (Habit) -> Void
 

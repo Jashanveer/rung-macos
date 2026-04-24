@@ -18,6 +18,16 @@ struct OnboardingView: View {
     @State private var pendingHabits: [String] = []
     @FocusState private var fieldFocused: Bool
 
+    @State private var phase: OnboardingPhase = .inputHabits
+    @State private var hasRequestedHealthKit = false
+    @State private var healthKitRequesting = false
+
+    /// Two-step onboarding: first the user stages their habits, then (if any
+    /// were staged) we bounce them to a permissions panel so HealthKit
+    /// authorization happens before they land on the empty dashboard. Users
+    /// who skip habits go straight through without the permissions step.
+    private enum OnboardingPhase { case inputHabits, permissions }
+
     var body: some View {
         ZStack {
             MinimalBackground()
@@ -29,7 +39,15 @@ struct OnboardingView: View {
                     VStack(spacing: 48) {
                         quoteSection
                         bodySection
-                        inputSection
+                        Group {
+                            switch phase {
+                            case .inputHabits: inputSection
+                            case .permissions: permissionsSection
+                            }
+                        }
+                        .transition(
+                            .opacity.combined(with: .offset(y: 10))
+                        )
                     }
                     .frame(maxWidth: 560)
                     .padding(.horizontal, 48)
@@ -179,7 +197,7 @@ struct OnboardingView: View {
                 .frame(maxWidth: 520)
             }
 
-            Button(action: beginExit) {
+            Button(action: advanceFromInput) {
                 Text(stagedHabits.isEmpty ? "Skip for now" : "Let's start →")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(maxWidth: .infinity)
@@ -193,6 +211,148 @@ struct OnboardingView: View {
         .opacity(inputVisible ? 1 : 0)
         .offset(y: inputVisible ? 0 : 14)
         .animation(.spring(response: 0.55, dampingFraction: 0.84), value: inputVisible)
+    }
+
+    // MARK: - Permissions step
+
+    /// Shown after the user stages at least one habit — asks for the
+    /// external-signal permissions Forma needs to back up verified
+    /// completions. Skipping is always an option; missing permission
+    /// just means future verifications silently fall back to self-report.
+    private var permissionsSection: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 6) {
+                Text("One last step")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .multilineTextAlignment(.center)
+                Text("Forma can check your habits against Apple Health so nobody games the leaderboard.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            permissionRow(
+                systemImage: "heart.text.square.fill",
+                tint: .pink,
+                title: "Apple Health",
+                subtitle: "Verify workouts, steps, mindful minutes, sleep, and more.",
+                granted: hasRequestedHealthKit,
+                busy: healthKitRequesting,
+                action: requestHealthKit
+            )
+
+            Button(action: beginExit) {
+                Text("Continue →")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+            }
+            .buttonStyle(PrimaryCapsuleButtonStyle())
+            .frame(maxWidth: 520)
+            .disabled(isExiting)
+
+            Button(action: beginExit) {
+                Text("Maybe later")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(isExiting)
+        }
+        .opacity(inputVisible ? 1 : 0)
+        .offset(y: inputVisible ? 0 : 14)
+        .animation(.spring(response: 0.55, dampingFraction: 0.84), value: inputVisible)
+    }
+
+    /// A single permission affordance — icon + copy + an action button that
+    /// flips to "Asked" once the OS permission sheet has been shown. We
+    /// deliberately do not surface the granted/denied outcome because
+    /// HealthKit hides it from third parties; showing "Asked ✓" keeps the
+    /// UI honest without pretending we know more than we do.
+    private func permissionRow(
+        systemImage: String,
+        tint: Color,
+        title: String,
+        subtitle: String,
+        granted: Bool,
+        busy: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 38, height: 38)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: action) {
+                Group {
+                    if busy {
+                        ProgressView().controlSize(.small)
+                    } else if granted {
+                        Label("Asked", systemImage: "checkmark")
+                            .font(.system(size: 12, weight: .semibold))
+                    } else {
+                        Text("Enable")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(granted ? tint : .white)
+                .padding(.horizontal, 14)
+                .frame(height: 30)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(granted ? tint.opacity(0.15) : CleanShotTheme.accent)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(busy || granted)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .cleanShotSurface(
+            shape: RoundedRectangle(cornerRadius: 12, style: .continuous),
+            level: .control
+        )
+        .frame(maxWidth: 520)
+    }
+
+    private func advanceFromInput() {
+        // Staging nothing is the "skip" path — exit straight through
+        // without pushing permissions. Anything staged means the user
+        // wants verification to work, so pause on the permissions step.
+        if stagedHabits.isEmpty {
+            beginExit()
+            return
+        }
+        fieldFocused = false
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.84)) {
+            phase = .permissions
+        }
+    }
+
+    private func requestHealthKit() {
+        guard !hasRequestedHealthKit, !healthKitRequesting else { return }
+        healthKitRequesting = true
+        Task {
+            try? await VerificationService.shared.requestAuthorization()
+            await MainActor.run {
+                hasRequestedHealthKit = true
+                healthKitRequesting = false
+            }
+        }
     }
 
     // MARK: - Sequence

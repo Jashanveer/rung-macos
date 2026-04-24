@@ -135,7 +135,12 @@ struct ContentView: View {
 
     // MARK: - Add habit
 
-    private func addHabit(_ entryType: HabitEntryType, dueAt: Date? = nil) {
+    private func addHabit(
+        _ entryType: HabitEntryType,
+        dueAt: Date? = nil,
+        canonical: CanonicalHabit? = nil,
+        weeklyTarget: Int? = nil
+    ) {
         let title = newHabitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
 
@@ -160,12 +165,19 @@ struct ContentView: View {
             return
         }
 
-        // Optimistic local insert with .pending status
+        // Optimistic local insert with .pending status. Canonical metadata
+        // is applied locally only for now — the backend doesn't yet accept
+        // verification fields (Phase 2) so we don't send them on create.
         let localHabit = Habit(
             title: title,
             entryType: entryType,
             syncStatus: .pending,
-            dueAt: entryType == .task ? dueAt : nil
+            dueAt: entryType == .task ? dueAt : nil,
+            verificationTier: canonical?.tier ?? .selfReport,
+            verificationSource: canonical?.source,
+            verificationParam: canonical?.param,
+            canonicalKey: canonical?.key,
+            weeklyTarget: entryType == .habit ? weeklyTarget : nil
         )
         withAnimation { modelContext.insert(localHabit) }
         newHabitTitle = ""

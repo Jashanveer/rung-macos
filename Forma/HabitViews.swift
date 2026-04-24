@@ -23,13 +23,33 @@ struct AddHabitBar: View {
     @Binding var selectedType: HabitEntryType
     var hasOverdueTask: Bool = false
     var hasDuplicateEntry: Bool = false
-    let onAddHabit: (HabitEntryType, Date?) -> Void
+    /// Commits a new habit / task. The trailing optionals carry any
+    /// canonical-match + weekly-target selection collected by the
+    /// confirmation card shown for habit-type adds. Tasks always pass nil
+    /// for both.
+    let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?) -> Void
 
     @State private var isHovered = false
     @State private var showValidationError = false
     @State private var dueAt: Date? = nil
     @State private var showDuePicker = false
     @FocusState private var fieldFocused: Bool
+
+    /// Populated once the user taps Add on a habit-type entry — surfaces an
+    /// inline confirmation card so they can pick a weekly target and
+    /// accept/decline any canonical HealthKit verification before the
+    /// habit actually commits.
+    @State private var pendingHabit: PendingHabitAdd?
+
+    /// Frequency-picker options shown on the confirmation card. nil = daily.
+    private static let frequencyOptions: [Int?] = [nil, 3, 5, 7]
+
+    struct PendingHabitAdd: Equatable {
+        let title: String
+        let match: CanonicalHabit?
+        var weeklyTarget: Int?
+        var acceptCanonical: Bool
+    }
 
     private var isBlockedByOverdue: Bool {
         selectedType == .task && hasOverdueTask
@@ -103,10 +123,152 @@ struct AddHabitBar: View {
                     .padding(.leading, 16)
                     .transition(.opacity.combined(with: .offset(y: -4)))
             }
+
+            if let pending = pendingHabit {
+                habitConfirmCard(pending: pending)
+                    .transition(.opacity.combined(with: .offset(y: -4)))
+            }
         }
         .animation(.easeOut(duration: 0.2), value: showValidationError)
         .animation(.easeOut(duration: 0.2), value: isBlockedByOverdue)
         .animation(.easeOut(duration: 0.2), value: isBlockedByDuplicate)
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: pendingHabit)
+    }
+
+    /// Inline confirmation card shown after the user taps Add on a habit.
+    /// Gives them one chance to (a) pick a weekly target so frequency
+    /// habits like "gym 5×/week" drop out of the list once met, and
+    /// (b) accept or decline the canonical HealthKit verification
+    /// suggestion — we never apply it silently.
+    private func habitConfirmCard(pending: PendingHabitAdd) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "flame.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(CleanShotTheme.success)
+                Text(pending.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("How often?")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(Self.frequencyOptions, id: \.self) { option in
+                        frequencyPill(option: option, selected: pending.weeklyTarget)
+                    }
+                }
+            }
+
+            if let match = pending.match {
+                HStack(spacing: 10) {
+                    Image(systemName: "heart.text.square.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.pink)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Verify with Apple Health")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Tracks as \(match.displayName) · \(tierLabel(match.tier))")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { pending.acceptCanonical },
+                            set: { newValue in
+                                guard var updated = pendingHabit else { return }
+                                updated.acceptCanonical = newValue
+                                pendingHabit = updated
+                            }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.pink.opacity(0.08))
+                )
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    pendingHabit = nil
+                } label: {
+                    Text("Cancel")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .frame(height: 30)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button {
+                    commitPending()
+                } label: {
+                    Text("Add habit")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .frame(height: 30)
+                        .background(Capsule().fill(CleanShotTheme.accent))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(CleanShotTheme.accent.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(CleanShotTheme.accent.opacity(0.22), lineWidth: 0.75)
+        )
+    }
+
+    private func frequencyPill(option: Int?, selected: Int?) -> some View {
+        let isActive = option == selected
+        let label: String = option.map { "\($0)×/wk" } ?? "Daily"
+        return Button {
+            guard var updated = pendingHabit else { return }
+            updated.weeklyTarget = option
+            pendingHabit = updated
+        } label: {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isActive ? .white : .primary)
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(
+                    Capsule()
+                        .fill(isActive ? CleanShotTheme.accent : Color.primary.opacity(0.06))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func tierLabel(_ tier: VerificationTier) -> String {
+        switch tier {
+        case .auto: return "HealthKit verified"
+        case .partial: return "Partially verified"
+        case .selfReport: return "Self-reported"
+        }
+    }
+
+    private func commitPending() {
+        guard let pending = pendingHabit else { return }
+        let canonical = pending.acceptCanonical ? pending.match : nil
+        onAddHabit(.habit, nil, canonical, pending.weeklyTarget)
+        pendingHabit = nil
     }
 
     private var duplicateWarningText: String {
@@ -128,9 +290,26 @@ struct AddHabitBar: View {
             return
         }
         showValidationError = false
-        let due = selectedType == .task ? dueAt : nil
-        onAddHabit(selectedType, due)
-        dueAt = nil
+        let trimmed = newHabitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Tasks commit straight through — no verification or weekly target.
+        if selectedType == .task {
+            onAddHabit(.task, dueAt, nil, nil)
+            dueAt = nil
+            return
+        }
+
+        // Habits drop into the inline confirmation card so the user can
+        // pick a weekly frequency and opt in/out of the canonical
+        // HealthKit verification (never auto-applied silently).
+        let match = CanonicalHabits.match(userTitle: trimmed)
+        pendingHabit = PendingHabitAdd(
+            title: trimmed,
+            match: match,
+            weeklyTarget: nil,
+            acceptCanonical: match != nil
+        )
+        fieldFocused = false
     }
 
     private func isLikelyMeaningful(_ text: String) -> Bool {
