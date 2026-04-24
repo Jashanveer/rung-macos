@@ -420,7 +420,11 @@ enum SmartGreeting {
     }
 }
 
-enum DateKey {
+/// Pure date-arithmetic helpers — explicitly `nonisolated` so they're
+/// callable from any actor context (the project enables
+/// `-default-isolation=MainActor` so unmarked statics get bound to the
+/// main actor by default, which would force every call site to hop).
+nonisolated enum DateKey {
     static func key(for date: Date) -> String {
         let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
         let year = components.year ?? 1970

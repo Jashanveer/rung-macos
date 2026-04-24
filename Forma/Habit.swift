@@ -238,6 +238,17 @@ final class Habit {
         entryType == .habit && (weeklyTarget ?? 0) > 0
     }
 
+    /// True when the habit has an external-signal verification source the
+    /// app can poll (HealthKit, Screen Time). Auto-verified habits can't
+    /// be manually toggled — `AutoVerificationCoordinator` watches the
+    /// source and marks them done on its own. Users keep an escape hatch
+    /// via long-press "Mark done manually" which records the completion
+    /// at `.selfReport` tier, preserving the leaderboard cheating cost.
+    var isAutoVerified: Bool {
+        guard entryType == .habit, let source = verificationSource else { return false }
+        return source != .selfReport
+    }
+
     /// Returns this habit's stable local UUID, lazily seeding one the first
     /// time a pre-Verification record is touched. Must be called from a
     /// write-capable context (e.g. inside a SwiftData `ModelContext` that

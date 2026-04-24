@@ -1025,14 +1025,27 @@ struct HabitCard: View {
     }
     private var effectiveDone: Bool { isFrozen || doneToday }
     private var isHabitEntry: Bool { habit.entryType == .habit }
+    private var isAutoVerified: Bool { habit.isAutoVerified }
     private var isOverdue: Bool { habit.isOverdue() }
     private var currentStreak: Int { HabitMetrics.currentStreak(for: habit.completedDayKeys, endingAt: todayKey) }
     private var bestStreak: Int { HabitMetrics.bestStreak(for: habit.completedDayKeys) }
     private var recentDays: [DayInfo] { DateKey.recentDays(count: 7) }
     private var completionTint: Color {
         if isFrozen { return Color.cyan }
+        if isAutoVerified { return Color.pink }
         if isHabitEntry { return CleanShotTheme.success }
         return isOverdue ? CleanShotTheme.danger : CleanShotTheme.accent
+    }
+    /// Status copy shown beneath the title for auto-verified habits so
+    /// the user understands why the circle isn't tappable. Empty for
+    /// manual habits — they fall back to the streak-flame label row.
+    private var autoVerifyStatus: String? {
+        guard isAutoVerified else { return nil }
+        if doneToday { return "Verified by Apple Health" }
+        if habit.verificationSource == .screenTimeSocial {
+            return "Waiting for Screen Time"
+        }
+        return "Waiting for Apple Health"
     }
     private var cardTint: Color {
         let opacity = colorScheme == .dark ? 0.10 : 0.07
@@ -1053,7 +1066,12 @@ struct HabitCard: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // Auto-verified habits render a non-tappable indicator —
+            // mistaken taps are silently ignored. The user can still
+            // long-press the row to surface the manual override item in
+            // the context menu when the evidence really is missing.
             Button {
+                guard !isAutoVerified else { return }
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                     onToggle(habit)
                 }
@@ -1061,24 +1079,42 @@ struct HabitCard: View {
                 ZStack {
                     Circle()
                         .fill(effectiveDone ? completionTint.opacity(0.16) : Color.clear)
-                    Circle()
-                        .strokeBorder(
-                            effectiveDone ? Color.clear : Color.secondary.opacity(0.32),
-                            lineWidth: 1.5
-                        )
+                    if isAutoVerified && !effectiveDone {
+                        // Dashed border telegraphs "this fills itself" so
+                        // users don't expect a tap to do anything.
+                        Circle()
+                            .strokeBorder(
+                                Color.pink.opacity(0.45),
+                                style: StrokeStyle(lineWidth: 1.5, dash: [3, 3])
+                            )
+                    } else {
+                        Circle()
+                            .strokeBorder(
+                                effectiveDone ? Color.clear : Color.secondary.opacity(0.32),
+                                lineWidth: 1.5
+                            )
+                    }
                     if effectiveDone {
-                        Image(systemName: isFrozen ? "snowflake" : "checkmark")
+                        Image(systemName: isFrozen ? "snowflake" : (isAutoVerified ? "heart.fill" : "checkmark"))
                             .font(.system(size: isFrozen ? 12 : 11, weight: .bold))
                             .foregroundStyle(completionTint)
                             .contentTransition(.symbolEffect(.replace.downUp))
                             .transition(.scale(scale: 0.5).combined(with: .opacity))
+                    } else if isAutoVerified {
+                        Image(systemName: "heart")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.pink.opacity(0.7))
                     }
                 }
                 .frame(width: 22, height: 22)
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isFrozen ? "Frozen" : (doneToday ? "Done" : "Not done"))
+            .accessibilityLabel(
+                isAutoVerified
+                    ? (doneToday ? "Verified by Apple Health" : "Waiting for Apple Health")
+                    : (isFrozen ? "Frozen" : (doneToday ? "Done" : "Not done"))
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -1094,13 +1130,23 @@ struct HabitCard: View {
 
                 HStack(spacing: 8) {
                     if isHabitEntry {
-                        if currentStreak > 0 {
-                            Label("\(currentStreak)d", systemImage: "flame.fill")
-                                .foregroundStyle(CleanShotTheme.warning)
-                        }
-                        if bestStreak > 0 {
-                            Label("\(bestStreak)d best", systemImage: "trophy.fill")
-                                .foregroundStyle(CleanShotTheme.gold)
+                        if let status = autoVerifyStatus {
+                            // Replaces the flame/trophy labels for
+                            // auto-verified habits — the circle's
+                            // appearance already carries the streak
+                            // meaning and we don't want users to think
+                            // they earned the streak by tapping.
+                            Label(status, systemImage: "heart.text.square.fill")
+                                .foregroundStyle(Color.pink.opacity(0.85))
+                        } else {
+                            if currentStreak > 0 {
+                                Label("\(currentStreak)d", systemImage: "flame.fill")
+                                    .foregroundStyle(CleanShotTheme.warning)
+                            }
+                            if bestStreak > 0 {
+                                Label("\(bestStreak)d best", systemImage: "trophy.fill")
+                                    .foregroundStyle(CleanShotTheme.gold)
+                            }
                         }
                     } else {
                         if let dueDateText {
@@ -1160,6 +1206,17 @@ struct HabitCard: View {
         .modifier(MatchedStampFrame(id: habit.persistentModelID, namespace: stampNamespace))
         .contextMenu {
             if isHabitEntry {
+                if isAutoVerified && !doneToday {
+                    Button {
+                        Task {
+                            await AutoVerificationCoordinator.shared.manualOverride(
+                                habit: habit, dayKey: todayKey
+                            )
+                        }
+                    } label: {
+                        Label("Mark done manually", systemImage: "checkmark.circle.dotted")
+                    }
+                }
                 Button(role: .destructive) {
                     showArchiveConfirm = true
                 } label: {

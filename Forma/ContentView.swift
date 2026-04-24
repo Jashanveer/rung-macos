@@ -5,6 +5,7 @@ import SwiftUI
 struct ContentView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @Query(filter: #Predicate<Habit> { !$0.isArchived }, sort: \Habit.createdAt) private var habits: [Habit]
     @StateObject private var backend = HabitBackendStore()
     @StateObject private var timeReminderManager = TimeReminderManager()
@@ -113,6 +114,23 @@ struct ContentView: View {
                 hasCompletedOnboarding = resolveOnboardingState()
             }
             refreshTimeReminders()
+            // Wire the auto-verifier up once and start its HK observers
+            // so verifiable habits can flip to done as soon as Apple
+            // Health receives a matching sample. Idempotent — safe to
+            // call on every appear.
+            AutoVerificationCoordinator.shared.configure(
+                backend: backend,
+                modelContext: modelContext
+            )
+            Task { await AutoVerificationCoordinator.shared.scan(habits: habits) }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Foreground transitions catch evidence that arrived while we
+            // were backgrounded — without HKObserverQuery background
+            // delivery (separate entitlement), this is the cheapest way
+            // to keep auto-verification feeling instant.
+            guard newPhase == .active else { return }
+            Task { await AutoVerificationCoordinator.shared.scan(habits: habits) }
         }
         .onReceive(Timer.publish(every: 300, on: .main, in: .common).autoconnect()) { _ in
             refreshTimeReminders()
@@ -412,6 +430,11 @@ struct ContentView: View {
     private func toggleHabit(_ habit: Habit) {
         // Tasks stay completed once checked — clicking a done task is a no-op.
         if habit.entryType == .task && habit.isTaskCompleted { return }
+        // Auto-verified habits never accept manual toggles — the
+        // AutoVerificationCoordinator owns their state. The escape hatch
+        // for honest users is the long-press "Mark done manually" item
+        // in HabitCard's context menu, which records at .selfReport tier.
+        if habit.isAutoVerified { return }
 
         var keys = habit.completedDayKeys
         let wasUnchecked: Bool
