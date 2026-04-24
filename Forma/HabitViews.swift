@@ -41,6 +41,14 @@ struct AddHabitBar: View {
     /// habit actually commits.
     @State private var pendingHabit: PendingHabitAdd?
 
+    /// Triggered after committing a canonical "screenTime" habit on iOS so
+    /// the user can nominate which apps count as social via Apple's
+    /// `FamilyActivityPicker`. Only meaningful when Family Controls is
+    /// authorized — the sheet itself handles the empty/cancel cases.
+    #if os(iOS)
+    @State private var showSocialAppsPicker = false
+    #endif
+
     /// Frequency-picker options shown on the confirmation card. nil = daily.
     private static let frequencyOptions: [Int?] = [nil, 3, 5, 7]
 
@@ -133,6 +141,11 @@ struct AddHabitBar: View {
         .animation(.easeOut(duration: 0.2), value: isBlockedByOverdue)
         .animation(.easeOut(duration: 0.2), value: isBlockedByDuplicate)
         .animation(.spring(response: 0.4, dampingFraction: 0.82), value: pendingHabit)
+        #if os(iOS)
+        .sheet(isPresented: $showSocialAppsPicker) {
+            SocialAppsPickerSheet(isPresented: $showSocialAppsPicker)
+        }
+        #endif
     }
 
     /// Inline confirmation card shown after the user taps Add on a habit.
@@ -268,7 +281,16 @@ struct AddHabitBar: View {
         guard let pending = pendingHabit else { return }
         let canonical = pending.acceptCanonical ? pending.match : nil
         onAddHabit(.habit, nil, canonical, pending.weeklyTarget)
+        let needsSocialPicker = canonical?.key == "screenTime"
         pendingHabit = nil
+        #if os(iOS)
+        // The screenTime canonical can only verify against an explicit
+        // app list — without picking the apps the monitor has nothing to
+        // count, so we surface the picker right after commit.
+        if needsSocialPicker { showSocialAppsPicker = true }
+        #else
+        _ = needsSocialPicker  // silence unused-let warning on macOS
+        #endif
     }
 
     private var duplicateWarningText: String {

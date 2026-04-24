@@ -139,9 +139,21 @@ actor VerificationService {
                     habitBackendId: habitBackendId, habitLocalId: habitLocalId,
                     dayKey: dayKey, tier: tier, fallback: fallback
                 )
-            case .screenTimeSocial, .selfReport:
-                // Screen Time verification is Phase 3 (iOS Family Controls).
-                // Everything else that can't be verified stays `.selfReport`.
+            case .screenTimeSocial:
+                // Screen Time verification is iOS-only (Family Controls
+                // doesn't exist on macOS). The macOS build always falls
+                // back to self-report; the iOS build reads the
+                // DeviceActivityMonitor's overLimit flag from the App
+                // Group inside `verifyScreenTimeSocial`.
+                #if os(iOS)
+                return await verifyScreenTimeSocial(
+                    habitBackendId: habitBackendId, habitLocalId: habitLocalId,
+                    dayKey: dayKey, tier: tier, fallback: fallback
+                )
+                #else
+                return fallback
+                #endif
+            case .selfReport:
                 return fallback
             }
         } catch {
