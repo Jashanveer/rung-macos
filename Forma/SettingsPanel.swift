@@ -29,6 +29,8 @@ struct SettingsPanel: View {
                     Spacer()
                 }
 
+                ProfileEditCard(backend: backend)
+
                 AccountActionsCard(backend: backend, showDeleteConfirm: $showDeleteConfirm)
 
                 VerificationHelpCard()
@@ -124,6 +126,100 @@ struct AccountActionsCard: View {
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
             level: .control
         )
+    }
+}
+
+/// Re-uses `AppleProfileSetupView` in its edit-mode init to let the
+/// user rename their handle or pick a different character at any
+/// time. Pre-fills the current username + avatar from the dashboard
+/// so an avatar-only change doesn't force a username re-pick. Hidden
+/// when there's no dashboard yet (pre-auth or first-load) — falling
+/// back to a "loading…" state would just confuse users since the rest
+/// of Settings is also blank in that case.
+struct ProfileEditCard: View {
+    @ObservedObject var backend: HabitBackendStore
+    @State private var showSheet = false
+
+    private var profile: AccountabilityDashboard.Profile? {
+        backend.dashboard?.profile
+    }
+
+    var body: some View {
+        if let profile {
+            VStack(alignment: .leading, spacing: 10) {
+                PanelTitle(systemImage: "person.crop.square", title: "Profile")
+
+                HStack(spacing: 12) {
+                    AsyncImage(url: URL(string: profile.avatarUrl ?? "")) { image in
+                        image.resizable().scaledToFit()
+                    } placeholder: {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(width: 44, height: 44)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle().strokeBorder(CleanShotTheme.accent.opacity(0.35), lineWidth: 1)
+                    )
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(profile.displayName.isEmpty ? "—" : profile.displayName)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        if let username = profile.username, !username.isEmpty {
+                            Text("@\(username.lowercased())")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer()
+                }
+
+                Button {
+                    showSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Edit profile")
+                            .font(.system(size: 12, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .foregroundStyle(CleanShotTheme.accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.plain)
+                .cleanShotSurface(
+                    shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
+                    level: .control
+                )
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cleanShotSurface(
+                shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+                level: .control
+            )
+            .sheet(isPresented: $showSheet) {
+                AppleProfileSetupView(
+                    backend: backend,
+                    initialUsername: profile.username ?? "",
+                    initialAvatarURL: profile.avatarUrl,
+                    onComplete: {
+                        showSheet = false
+                        Task { await backend.refreshDashboard() }
+                    }
+                )
+                .frame(minWidth: 460, minHeight: 600)
+            }
+        }
     }
 }
 

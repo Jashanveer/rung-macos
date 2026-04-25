@@ -1,27 +1,75 @@
 import SwiftUI
 
-/// One-time profile-setup screen shown immediately after a fresh
-/// Sign in with Apple sign-up — Apple's identity token only includes the
-/// user's email + (optionally) name once, so this is the user's first
-/// chance to pick the public handle they want on the leaderboard and
-/// the avatar that shows up next to it.
+/// Profile setup / edit screen — shown both immediately after a fresh
+/// Sign in with Apple sign-up (when Apple's identity token only carries
+/// the user's email + optional name on the very first auth) and again
+/// from Settings when the user wants to rename their handle or pick a
+/// new avatar.
 ///
-/// Presented as a full-screen overlay above `ContentViewScaffold` while
-/// `HabitBackendStore.requiresProfileSetup == true`. On submit success
-/// the flag clears and the user falls through to normal onboarding.
+/// Two presentation modes:
+///   - **Setup** (default init): full-screen overlay above
+///     `ContentViewScaffold` while `requiresProfileSetup == true`. On
+///     submit the flag clears and the user falls through to onboarding.
+///   - **Edit** (`initialUsername` / `initialAvatarURL` non-nil): pushed
+///     as a sheet from `SettingsPanel`. Pre-fills the current values so
+///     the user can keep their avatar and only rename, etc.
 struct AppleProfileSetupView: View {
     @ObservedObject var backend: HabitBackendStore
     let onComplete: () -> Void
+    let initialUsername: String?
+    let initialAvatarURL: String?
+    let isEditing: Bool
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
 
-    @State private var username: String = ""
-    @State private var selectedAvatarID = AvatarChoice.options.randomElement()?.id ?? AvatarChoice.options[0].id
-    @State private var availability: AvailabilityState = .untouched
+    @State private var username: String
+    @State private var selectedAvatarID: String
+    @State private var availability: AvailabilityState
     @State private var lastCheckedUsername: String = ""
     @State private var checkTask: Task<Void, Never>?
     @State private var isSubmitting = false
     @FocusState private var usernameFocused: Bool
+
+    /// Setup-mode initialiser used by the post-signup overlay.
+    init(
+        backend: HabitBackendStore,
+        onComplete: @escaping () -> Void
+    ) {
+        self.backend = backend
+        self.onComplete = onComplete
+        self.initialUsername = nil
+        self.initialAvatarURL = nil
+        self.isEditing = false
+        _username = State(initialValue: "")
+        _selectedAvatarID = State(initialValue: AvatarChoice.options.randomElement()?.id ?? AvatarChoice.options[0].id)
+        _availability = State(initialValue: .untouched)
+    }
+
+    /// Edit-mode initialiser used by SettingsPanel. Pre-fills both the
+    /// username and the currently-selected avatar so a user who only
+    /// wants to rename doesn't have to re-pick their character.
+    init(
+        backend: HabitBackendStore,
+        initialUsername: String,
+        initialAvatarURL: String?,
+        onComplete: @escaping () -> Void
+    ) {
+        self.backend = backend
+        self.onComplete = onComplete
+        self.initialUsername = initialUsername
+        self.initialAvatarURL = initialAvatarURL
+        self.isEditing = true
+        _username = State(initialValue: initialUsername)
+        let matchedID = AvatarChoice.options.first { $0.url == initialAvatarURL }?.id
+            ?? AvatarChoice.options.randomElement()?.id
+            ?? AvatarChoice.options[0].id
+        _selectedAvatarID = State(initialValue: matchedID)
+        // The pre-filled username is by definition already this user's
+        // own handle on the server, so seed availability as `.available`
+        // — the backend treats unchanged-username as a no-op rename.
+        _availability = State(initialValue: .available)
+    }
 
     private enum AvailabilityState {
         case untouched
@@ -49,11 +97,11 @@ struct AppleProfileSetupView: View {
     }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topTrailing) {
             MinimalBackground()
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 32) {
-                    Spacer(minLength: 60)
+                    Spacer(minLength: isEditing ? 24 : 60)
 
                     header
 
@@ -71,23 +119,39 @@ struct AppleProfileSetupView: View {
                 .padding(.horizontal, 28)
                 .frame(maxWidth: .infinity)
             }
+            // In edit mode the screen is a sheet — give the user an
+            // unambiguous way out. The setup-mode flow is gated by
+            // requiresProfileSetup so we deliberately omit it there.
+            if isEditing {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .onAppear { usernameFocused = true }
+        .onAppear { usernameFocused = !isEditing }
     }
 
     // MARK: - Sections
 
     private var header: some View {
         VStack(spacing: 10) {
-            Image(systemName: "checkmark.seal.fill")
+            Image(systemName: isEditing ? "pencil.circle.fill" : "checkmark.seal.fill")
                 .font(.system(size: 40, weight: .semibold))
                 .foregroundStyle(CleanShotTheme.accent)
 
-            Text("Welcome to Forma.")
+            Text(isEditing ? "Edit your profile." : "Welcome to Forma.")
                 .font(.system(size: 28, weight: .bold, design: .rounded))
                 .multilineTextAlignment(.center)
 
-            Text("Pick a username and a character — these show up on the leaderboard.")
+            Text(isEditing
+                 ? "Update your username or character — these show up on the leaderboard and in friend feeds."
+                 : "Pick a username and a character — these show up on the leaderboard.")
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -206,7 +270,7 @@ struct AppleProfileSetupView: View {
                     if isSubmitting {
                         ProgressView().controlSize(.small).tint(.white)
                     }
-                    Text("Continue →")
+                    Text(isEditing ? "Save changes" : "Continue →")
                         .font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
