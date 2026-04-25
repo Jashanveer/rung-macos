@@ -511,56 +511,13 @@ struct AuthGateView: View {
             .onTapGesture { shuffleQuote() }
             .help("Tap for another")
 
-            tabSwitcher
-                .padding(.bottom, 16)
-
-            // Apple-first: prominent SignInWithAppleButton sits above the
-            // email/password form so users default to the one-tap path.
-            // Email login stays available as a secondary fallback below.
+            // Apple-only sign-in. Email/password code paths in
+            // BackendAPIClient + AuthService stay intact for future use,
+            // but the UI surfaces only the one-tap Apple flow per the
+            // product decision to avoid the password-recovery / email-
+            // verification surface area entirely.
             appleSignInButton
-
-            HStack(spacing: 10) {
-                Rectangle().fill(.secondary.opacity(0.20)).frame(height: 0.5)
-                Text("or use email")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .textCase(.uppercase)
-                    .kerning(0.5)
-                Rectangle().fill(.secondary.opacity(0.20)).frame(height: 0.5)
-            }
-            .padding(.vertical, 10)
-
-            VStack(spacing: 10) {
-                authInput(placeholder: "Username", text: $username, isSecure: false)
-                    .onSubmit { submit() }
-
-                if mode == .signUp {
-                    authInput(placeholder: "Email", text: $email, isSecure: false)
-                        .onChange(of: email) { _, _ in
-                            isVerificationCodeSent = false
-                            verificationCode = ""
-                            successMessage = nil
-                        }
-                        .onSubmit { submit() }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                authInput(placeholder: "Password", text: $password, isSecure: true)
-                    .onSubmit { submit() }
-
-                if mode == .signUp && isVerificationCodeSent {
-                    authInput(placeholder: "6-digit verification code",
-                              text: $verificationCode, isSecure: false)
-                        .onSubmit { submit() }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-
-            if mode == .signUp {
-                avatarGrid
-                    .padding(.top, 14)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+                .padding(.top, 8)
 
             if let message = validationMessage ?? backend.errorMessage {
                 Text(message)
@@ -568,51 +525,14 @@ struct AuthGateView: View {
                     .foregroundStyle(Color(red: 0.84, green: 0.30, blue: 0.30))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 8)
+                    .padding(.top, 12)
             }
 
-            if let successMessage {
-                Text(successMessage)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color(red: 0.28, green: 0.66, blue: 0.36))
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 8)
-            }
-
-            Button(action: submit) {
-                HStack(spacing: 8) {
-                    if backend.isSyncing {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.white)
-                    }
-                    Text(primaryActionTitle)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 38)
-            }
-            .buttonStyle(GradientPrimaryButtonStyle())
-            .disabled(backend.isSyncing)
-            .padding(.top, 8)
-
-            if mode == .signUp && isVerificationCodeSent {
-                Button("Resend code", action: resendVerificationCode)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(subtitleColor)
-                    .disabled(backend.isSyncing)
-                    .padding(.top, 10)
-            }
-
-            Text(mode == .signIn
-                 ? "Forgot password?"
-                 : "By continuing you agree to our Terms & Privacy")
-                .font(.system(size: 11.5))
+            Text("By continuing you agree to our Terms & Privacy.")
+                .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(termsColor)
                 .multilineTextAlignment(.center)
-                .padding(.top, 14)
+                .padding(.top, 16)
         }
     }
 
