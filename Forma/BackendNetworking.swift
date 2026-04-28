@@ -218,6 +218,15 @@ struct UserPreferences: Codable, Equatable {
     let emailOptIn: Bool
 }
 
+// MARK: - ProfileStatus
+
+/// Slice of the `/api/me` response the client actually consumes —
+/// just the V15 `profileSetupCompleted` flag used to decide whether to
+/// re-show `AppleProfileSetupView` on cold launch.
+struct ProfileStatus {
+    let profileSetupCompleted: Bool
+}
+
 // MARK: - BackendAPIClient
 
 actor BackendAPIClient {
@@ -288,6 +297,15 @@ actor BackendAPIClient {
             method: "GET"
         )
         return response.available
+    }
+
+    /// Fetches the server-side `MeResponse` so the client can read the
+    /// V15 `profileSetupCompleted` flag on cold launch and re-show the
+    /// `AppleProfileSetupView` if the user quit mid-setup. Treats a
+    /// missing field as "true" so a pre-V15 server keeps working.
+    func fetchMe() async throws -> ProfileStatus {
+        let r: MeResponse = try await authorizedRequest(path: "/api/me", method: "GET")
+        return ProfileStatus(profileSetupCompleted: r.profileSetupCompleted ?? true)
     }
 
     /// One-time post-Apple-signup setup — submits the chosen username,
@@ -553,7 +571,17 @@ actor BackendAPIClient {
     private struct AppleLoginRequest: Encodable { let identityToken: String; let displayName: String? }
     private struct ProfileSetupRequest: Encodable { let username: String; let avatarUrl: String; let displayName: String? }
     private struct UsernameAvailabilityResponse: Decodable { let available: Bool }
-    private struct MeResponse: Decodable { let userId: Int64?; let email: String?; let username: String? }
+    /// Mirror of `/api/me` and the response of `/api/users/me/setup-profile`.
+    /// `profileSetupCompleted` is the V15 server-side flag — optional in the
+    /// decoder so that talking to a pre-V15 server (during a partial
+    /// rollout) doesn't fail decoding; the caller treats `nil` as "true"
+    /// because legacy users had already finished setup.
+    private struct MeResponse: Decodable {
+        let userId: Int64?
+        let email: String?
+        let username: String?
+        let profileSetupCompleted: Bool?
+    }
     private struct LogoutRequest:   Encodable { let refreshToken: String }
     private struct MessageResponse: Decodable { let message: String }
     private struct ApiErrorResponse: Decodable { let message: String }
@@ -575,6 +603,10 @@ struct AuthRepository {
 
     func isUsernameAvailable(_ username: String) async throws -> Bool {
         try await client.isUsernameAvailable(username)
+    }
+
+    func fetchMe() async throws -> ProfileStatus {
+        try await client.fetchMe()
     }
 
     func setupProfile(username: String, avatarURL: String, displayName: String?) async throws {

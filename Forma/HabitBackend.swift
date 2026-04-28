@@ -519,6 +519,15 @@ final class HabitBackendStore: ObservableObject {
             requiresProfileSetup = true
         }
 
+        // Server-side reconcile (V15 `profile_setup_completed`). The
+        // UserDefaults check above is the offline / pre-network primer;
+        // this Task asks the server for the truth and either confirms
+        // (no-op), forces the overlay even if local state forgot, or
+        // clears it (e.g. user finished setup on another device).
+        if session != nil {
+            Task { [weak self] in await self?.reconcileProfileSetupFromServer() }
+        }
+
         isOnline = networkMonitor.isOnline
         networkCancellable = networkMonitor.$isOnline
             .receive(on: DispatchQueue.main)
@@ -690,6 +699,43 @@ final class HabitBackendStore: ObservableObject {
             errorMessage = error.localizedDescription
             authRequestState = .failure(error.localizedDescription)
             return false
+        }
+    }
+
+    /// Cold-launch reconciliation against the V15 `profile_setup_completed`
+    /// flag. Local UserDefaults primes the overlay before the network
+    /// returns; this method is the source of truth that overrides it.
+    /// Silently no-ops on network failure — the local primer is the
+    /// fallback, so the worst case is a one-launch lag in either
+    /// direction.
+    private func reconcileProfileSetupFromServer() async {
+        guard isAuthenticated else { return }
+        do {
+            let status = try await authRepository.fetchMe()
+            await MainActor.run {
+                if status.profileSetupCompleted {
+                    // Server confirms setup is done. Drop any local
+                    // pending flag (e.g. user finished setup on another
+                    // device) so this device stops showing the overlay.
+                    if requiresProfileSetup {
+                        requiresProfileSetup = false
+                    }
+                    if let uid = currentUserId {
+                        UserDefaults.standard.removeObject(forKey: Self.profileSetupPendingKey(for: uid))
+                    }
+                } else {
+                    // Server says setup is still pending — surface the
+                    // overlay and persist so we still know on the next
+                    // cold launch even if the network is offline.
+                    requiresProfileSetup = true
+                    if let uid = currentUserId {
+                        UserDefaults.standard.set(true, forKey: Self.profileSetupPendingKey(for: uid))
+                    }
+                }
+            }
+        } catch {
+            // Silent — Fix-A's UserDefaults flag (if any) already drove
+            // the right initial state.
         }
     }
 
