@@ -1,17 +1,33 @@
 import Foundation
 
 enum BackendEnvironment {
-    // Resolved from the `BackendBaseURL` Info.plist key (set via
-    // INFOPLIST_KEY_BackendBaseURL in build settings). Falls back to the
-    // local dev server so unit tests and Previews still work.
+    // Resolution order, highest priority first:
+    //   1. Launch argument `-BackendBaseURL <url>`.
+    //      UserDefaults.standard auto-binds command-line args via the
+    //      NSArgumentDomain. Toggle in Xcode → Edit Scheme → Run →
+    //      Arguments → Arguments Passed On Launch. No rebuild required —
+    //      just stop and ⌘R after toggling the checkbox.
+    //   2. `BackendBaseURL` from Info.plist (the build-time default).
+    //   3. Hard-coded Fly.io dev backend, so Previews, unit tests, and any
+    //      build whose Info.plist key isn't wired still reach a server.
     nonisolated static let baseURL: URL = {
-        let fallback = URL(string: "http://127.0.0.1:8080")!
-        guard
-            let raw = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
-            !raw.trimmingCharacters(in: .whitespaces).isEmpty,
-            let url = URL(string: raw.trimmingCharacters(in: .whitespaces))
-        else { return fallback }
-        return url
+        let fallback = URL(string: "https://rung-backend-dev.fly.dev")!
+
+        if let arg = UserDefaults.standard.string(forKey: "BackendBaseURL"),
+           case let trimmed = arg.trimmingCharacters(in: .whitespaces),
+           !trimmed.isEmpty,
+           let url = URL(string: trimmed) {
+            return url
+        }
+
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "BackendBaseURL") as? String,
+           case let trimmed = raw.trimmingCharacters(in: .whitespaces),
+           !trimmed.isEmpty,
+           let url = URL(string: trimmed) {
+            return url
+        }
+
+        return fallback
     }()
 
     nonisolated static var displayHost: String {

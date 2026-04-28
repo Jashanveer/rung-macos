@@ -68,6 +68,13 @@
 			);
 			target = F154B69396161217305A3106 /* RungWidgets */;
 		};
+		D1E2F3041BCD2E3F4050A1B2 /* Exceptions for "Rung" folder in "Rung" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 9BA6DAFB2F8F3C8E009AA3BC /* Rung */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -86,6 +93,9 @@
 		};
 		9BA6DAFE2F8F3C8E009AA3BC /* Rung */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D1E2F3041BCD2E3F4050A1B2 /* Exceptions for "Rung" folder in "Rung" target */,
+			);
 			path = Rung;
 			sourceTree = "<group>";
 		};
@@ -558,7 +568,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_BackendBaseURL = "http://127.0.0.1:8080";
+				INFOPLIST_FILE = Rung/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Rung;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Rung uses Apple Health data to verify your habits and award accurate leaderboard points.";
@@ -608,7 +618,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_BackendBaseURL = "http://127.0.0.1:8080";
+				INFOPLIST_FILE = Rung/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Rung;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Rung uses Apple Health data to verify your habits and award accurate leaderboard points.";
