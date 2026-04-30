@@ -48,6 +48,11 @@ final class HabitCompletion {
     /// When the verification attempt finished (not the activity itself).
     var createdAt: Date
 
+    /// Seconds the user spent completing the habit, when the client knows
+    /// it. Currently populated only by Focus Mode sessions that ended with
+    /// the user toggling the same task done. Nil for plain manual toggles.
+    var durationSeconds: Int?
+
     init(
         habitBackendId: Int64? = nil,
         habitLocalId: UUID,
@@ -55,7 +60,8 @@ final class HabitCompletion {
         verifiedBySource: VerificationSource = .selfReport,
         awardedTier: VerificationTier = .selfReport,
         evidenceJSON: Data? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        durationSeconds: Int? = nil
     ) {
         self.habitBackendId = habitBackendId
         self.habitLocalId = habitLocalId
@@ -64,6 +70,7 @@ final class HabitCompletion {
         self.awardedTierRaw = awardedTier.rawValue
         self.evidenceJSON = evidenceJSON
         self.createdAt = createdAt
+        self.durationSeconds = durationSeconds
     }
 
     /// Typed accessor for `verifiedBySourceRaw`; unknown raw values fall back

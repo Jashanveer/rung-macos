@@ -1006,14 +1006,16 @@ final class HabitBackendStore: ObservableObject {
         dateKey: String,
         done: Bool,
         verificationTier: String? = nil,
-        verificationSource: String? = nil
+        verificationSource: String? = nil,
+        durationSeconds: Int? = nil
     ) async throws {
         checkUpdateRequestState = .loading; refreshSyncingState()
         do {
             _ = try await habitRepository.setCheck(
                 habitID: habitID, dateKey: dateKey, done: done,
                 verificationTier: verificationTier,
-                verificationSource: verificationSource
+                verificationSource: verificationSource,
+                durationSeconds: durationSeconds
             )
             await syncSessionFromClient()
             await responseCache.invalidateHabits()
@@ -1029,10 +1031,18 @@ final class HabitBackendStore: ObservableObject {
         }
     }
 
-    func setTaskCheck(taskID: Int64, dateKey: String, done: Bool) async throws {
+    func setTaskCheck(
+        taskID: Int64,
+        dateKey: String,
+        done: Bool,
+        durationSeconds: Int? = nil
+    ) async throws {
         checkUpdateRequestState = .loading; refreshSyncingState()
         do {
-            _ = try await habitRepository.setTaskCheck(taskID: taskID, dateKey: dateKey, done: done)
+            _ = try await habitRepository.setTaskCheck(
+                taskID: taskID, dateKey: dateKey, done: done,
+                durationSeconds: durationSeconds
+            )
             await syncSessionFromClient()
             await responseCache.invalidateHabits()
             await responseCache.invalidateDashboard()

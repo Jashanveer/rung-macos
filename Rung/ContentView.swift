@@ -561,6 +561,13 @@ struct ContentView: View {
         guard let backendId = habit.backendId, backend.isAuthenticated else { return }
         let habitTierRaw = habit.verificationTierRaw
         let habitSourceRaw = habit.verificationSourceRaw
+        // If the user just finished a Focus Mode session for this habit/task
+        // (within the last 5 minutes), attribute that session length as the
+        // duration. Lets the speed-trend stats show real numbers without
+        // forcing the user to time anything by hand.
+        let focusDuration = wasUnchecked
+            ? FocusController.shared.recentlyCompletedDuration(for: habit.title)
+            : nil
         Task {
             do {
                 switch habit.entryType {
@@ -573,10 +580,16 @@ struct ContentView: View {
                         dateKey: todayKey,
                         done: wasUnchecked,
                         verificationTier: wasUnchecked ? habitTierRaw : nil,
-                        verificationSource: wasUnchecked ? habitSourceRaw : nil
+                        verificationSource: wasUnchecked ? habitSourceRaw : nil,
+                        durationSeconds: focusDuration
                     )
                 case .task:
-                    try await backend.setTaskCheck(taskID: backendId, dateKey: todayKey, done: wasUnchecked)
+                    try await backend.setTaskCheck(
+                        taskID: backendId,
+                        dateKey: todayKey,
+                        done: wasUnchecked,
+                        durationSeconds: focusDuration
+                    )
                 }
                 habit.pendingCheckDayKey = nil   // operation confirmed — safe to reconcile
                 habit.syncStatus = .synced

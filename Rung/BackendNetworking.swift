@@ -833,7 +833,8 @@ struct HabitRepository {
         dateKey: String,
         done: Bool,
         verificationTier: String? = nil,
-        verificationSource: String? = nil
+        verificationSource: String? = nil,
+        durationSeconds: Int? = nil
     ) async throws -> BackendHabit {
         let habit: BackendHabit = try await client.authorizedRequest(
             path: "/api/habits/\(habitID)/checks/\(dateKey)",
@@ -841,7 +842,8 @@ struct HabitRepository {
             body: CheckUpdateRequest(
                 done: done,
                 verificationTier: verificationTier,
-                verificationSource: verificationSource
+                verificationSource: verificationSource,
+                durationSeconds: durationSeconds
             )
         )
         return BackendHabit(
@@ -859,13 +861,23 @@ struct HabitRepository {
         )
     }
 
-    func setTaskCheck(taskID: Int64, dateKey: String, done: Bool) async throws -> BackendHabit {
+    func setTaskCheck(
+        taskID: Int64,
+        dateKey: String,
+        done: Bool,
+        durationSeconds: Int? = nil
+    ) async throws -> BackendHabit {
         // Tasks never carry verification metadata — pass explicit nils to
         // keep the `CheckUpdateRequest` payload shape uniform.
         let task: BackendHabit = try await client.authorizedRequest(
             path: "/api/tasks/\(taskID)/checks/\(dateKey)",
             method: "PUT",
-            body: CheckUpdateRequest(done: done, verificationTier: nil, verificationSource: nil)
+            body: CheckUpdateRequest(
+                done: done,
+                verificationTier: nil,
+                verificationSource: nil,
+                durationSeconds: durationSeconds
+            )
         )
         return BackendHabit(
             id: task.id,
@@ -899,6 +911,7 @@ struct HabitRepository {
         let done: Bool
         let verificationTier: String?
         let verificationSource: String?
+        let durationSeconds: Int?
     }
     private struct EmptyResponse: Decodable {}
 }

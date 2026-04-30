@@ -111,9 +111,28 @@ final class FocusController: ObservableObject {
     /// Pomodoro Technique cadence).
     @Published private(set) var completedFocusCount: Int = 0
 
+    /// Snapshot of the most recently *finished* focus phase, capped to one
+    /// entry. The toggle path queries this when the user marks the same
+    /// task done shortly after — we attribute the focus length as the
+    /// completion duration so the stats card shows real numbers without
+    /// asking the user to time anything by hand.
+    private var lastCompletedFocus: (taskTitle: String, duration: TimeInterval, finishedAt: Date)?
+
     private var timer: AnyCancellable?
 
     private init() {}
+
+    /// Returns the duration (in seconds) of a focus session that just
+    /// finished for `taskTitle`, if and only if it was within the last
+    /// 5 minutes. Consumed by `ContentView.toggleHabit` so the duration
+    /// feeds straight into the next `setCheck` call. Returns nil when the
+    /// snapshot doesn't match or has aged out.
+    func recentlyCompletedDuration(for taskTitle: String) -> Int? {
+        guard let snap = lastCompletedFocus else { return nil }
+        guard snap.taskTitle.caseInsensitiveCompare(taskTitle) == .orderedSame else { return nil }
+        guard Date().timeIntervalSince(snap.finishedAt) <= 5 * 60 else { return nil }
+        return Int(snap.duration.rounded())
+    }
 
     /// Begin a new session. Existing sessions are cancelled silently so the
     /// caller doesn't need to remember to stop first.
@@ -186,13 +205,20 @@ final class FocusController: ObservableObject {
 
     /// Called when the timer hits zero. Auto-advances into the next phase
     /// and bumps the focus counter so every fourth focus session earns a
-    /// long break.
+    /// long break. Also stamps `lastCompletedFocus` so a follow-up toggle
+    /// from the dashboard can attribute the focus length as the habit's
+    /// completion duration.
     func skip() {
         guard let current = session else { return }
         timer?.cancel()
         timer = nil
         if current.phase == .focus {
             completedFocusCount += 1
+            // Only focus phases (not breaks) get attributed as habit time.
+            // Use elapsed-since-start so a manually skipped session credits
+            // the actual focused minutes, not the original target length.
+            let elapsed = max(0, current.duration - remaining)
+            lastCompletedFocus = (current.taskTitle, elapsed, Date())
         }
         let next = nextPhase(after: current.phase)
         start(taskTitle: current.taskTitle, phase: next)
