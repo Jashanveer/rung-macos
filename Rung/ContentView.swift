@@ -159,6 +159,10 @@ struct ContentView: View {
         }
         .animation(.smooth(duration: 0.2), value: colorScheme)
         .task {
+            // Bind the sleep service so it can upload (iOS) / fetch
+            // (macOS) snapshots through the same backend store. Cheap and
+            // idempotent — safe to re-run on every appear.
+            SleepInsightsService.shared.bind(backend: backend)
             guard backend.isAuthenticated else { return }
             syncWithBackend()
         }

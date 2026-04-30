@@ -33,6 +33,17 @@ final class SleepInsightsService: ObservableObject {
     /// suggestion chips so the user doesn't see them flicker.
     @Published private(set) var isRefreshing = false
 
+    /// Server timestamp on the snapshot we last pulled from the backend.
+    /// Nil on iOS (where the snapshot is computed locally) and on macOS
+    /// before the first fetch. macOS uses this to dim the readout when
+    /// the iPhone hasn't synced lately.
+    @Published private(set) var snapshotUpdatedAt: Date?
+
+    /// Backend store reference, lazily set by the app delegate / scene
+    /// once the user is authenticated. Without it, refresh runs in
+    /// local-only mode (HK on iOS, no-op on macOS).
+    private weak var backend: HabitBackendStore?
+
     private let store = HKHealthStore()
 
     /// Hours of sleep we treat as "fully rested" for the purpose of
@@ -57,12 +68,41 @@ final class SleepInsightsService: ObservableObject {
 
     private init() {}
 
+    /// Wire the backend store after sign-in so iOS can upload its
+    /// snapshot and macOS can fetch a remote one. Safe to call multiple
+    /// times — only the most recent reference is kept.
+    func bind(backend: HabitBackendStore) {
+        self.backend = backend
+    }
+
     /// Pull the last `nights` nights of sleep samples and recompute the
-    /// snapshot. Safe to call on platforms without HealthKit (e.g. older
-    /// macOS) — returns silently. Idempotent.
+    /// snapshot. Behaviour by platform:
+    /// - **iOS**: queries HealthKit, computes locally, uploads to backend
+    ///   so other devices can read it.
+    /// - **macOS**: HealthKit isn't available on native Mac apps, so the
+    ///   service skips straight to fetching the iPhone-uploaded snapshot
+    ///   from the backend.
     func refresh(nights: Int = 14) async {
+        #if os(macOS)
+        // Native macOS apps can't read HealthKit. Skip the local query
+        // entirely and lean on whatever the iPhone uploaded.
+        await refreshFromBackend()
+        return
+        #else
+        await refreshFromHealthKit(nights: nights)
+        #endif
+    }
+
+    #if !os(macOS)
+    /// HealthKit-driven refresh path. iOS-only because native macOS apps
+    /// can't read HK. After computing locally, pushes the snapshot to
+    /// the backend so the Mac client can read what we just computed.
+    private func refreshFromHealthKit(nights: Int) async {
         guard HKHealthStore.isHealthDataAvailable(),
               let sleepType = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
+            // HK isn't available on this device — try the backend
+            // fallback so the user still sees something.
+            await refreshFromBackend()
             return
         }
 
@@ -137,10 +177,57 @@ final class SleepInsightsService: ObservableObject {
             chronotypeStable: chronotypeStable
         )
         snapshot = snap
+        snapshotUpdatedAt = nil   // local-derived; no server timestamp yet
 
         // Materialise today's energy forecast off the same snapshot so
         // every consumer (suggestion chip, energy view, focus-time
         // recommender) reads from the same source.
+        forecast = Self.makeForecast(snap: snap)
+
+        // Push to the backend so other devices (notably macOS, where HK
+        // isn't available) can read what iOS computed. Fire-and-forget.
+        if let backend {
+            let payload = BackendSleepSnapshot(
+                sampleCount: snap.sampleCount,
+                medianWakeMinutes: snap.medianWakeMinutes,
+                medianBedMinutes: snap.medianBedMinutes,
+                averageDurationHours: snap.averageDurationHours,
+                sleepDebtHours: snap.sleepDebtHours,
+                medianSleepMidpointMinutes: snap.medianSleepMidpointMinutes,
+                midpointIqrMinutes: snap.midpointIQRMinutes,
+                chronotypeStable: snap.chronotypeStable,
+                updatedAt: nil
+            )
+            await backend.uploadSleepSnapshot(payload)
+        }
+    }
+    #endif
+
+    /// Backend-driven refresh. macOS calls this directly (no HK at all);
+    /// iOS calls it as a fallback when HK isn't available. No-op when
+    /// the user isn't signed in or the backend has no row yet.
+    private func refreshFromBackend() async {
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        guard let backend, let remote = await backend.fetchSleepSnapshot() else {
+            // Don't blow away an existing snapshot — let the empty state
+            // continue showing if we already had nothing.
+            return
+        }
+
+        let snap = SleepSnapshot(
+            sampleCount: remote.sampleCount,
+            medianWakeMinutes: remote.medianWakeMinutes,
+            medianBedMinutes: remote.medianBedMinutes,
+            averageDurationHours: remote.averageDurationHours,
+            sleepDebtHours: remote.sleepDebtHours,
+            medianSleepMidpointMinutes: remote.medianSleepMidpointMinutes,
+            midpointIQRMinutes: remote.midpointIqrMinutes,
+            chronotypeStable: remote.chronotypeStable
+        )
+        snapshot = snap
+        snapshotUpdatedAt = remote.updatedAt
         forecast = Self.makeForecast(snap: snap)
     }
 

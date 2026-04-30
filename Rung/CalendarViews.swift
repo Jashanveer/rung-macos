@@ -184,23 +184,28 @@ struct CalendarSheet: View {
                 .buttonStyle(.plain)
             }
 
-            switch sheetMode {
-            case .calendar:
-                YearPerfectCalendar(
-                    dailyCompletionCounts: dailyCompletionCounts,
-                    perfectDayKeys: perfectDayKeys,
-                    displayMode: displayMode,
-                    totalHabits: totalHabits,
-                    isCompact: false,
-                    namespace: monthTransitionNamespace,
-                    onTapMonth: nil
-                )
-                .transition(.opacity.combined(with: .offset(y: 6)))
-            case .energy:
-                EnergyView(service: SleepInsightsService.shared)
-                    .frame(maxHeight: 520)
-                    .transition(.opacity.combined(with: .offset(y: 6)))
+            // Both modes share a fixed-height container so flipping the
+            // toggle never resizes the bottom sheet — same window, two
+            // views. Height roughly matches a year-grid calendar's
+            // natural size on macOS / iPad.
+            Group {
+                switch sheetMode {
+                case .calendar:
+                    YearPerfectCalendar(
+                        dailyCompletionCounts: dailyCompletionCounts,
+                        perfectDayKeys: perfectDayKeys,
+                        displayMode: displayMode,
+                        totalHabits: totalHabits,
+                        isCompact: false,
+                        namespace: monthTransitionNamespace,
+                        onTapMonth: nil
+                    )
+                case .energy:
+                    EnergyView(service: SleepInsightsService.shared)
+                }
             }
+            .frame(height: 540)
+            .transition(.opacity.combined(with: .offset(y: 6)))
         }
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: sheetMode)
         .padding(18)

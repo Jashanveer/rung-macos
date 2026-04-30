@@ -392,6 +392,7 @@ final class HabitBackendStore: ObservableObject {
     private let accountabilityRepository: AccountabilityRepository
     private let deviceRepository: DeviceRepository
     private let preferencesRepository: PreferencesRepository
+    private let sleepSnapshotRepository: SleepSnapshotRepository
     /// Shared response cache; invalidated by any write that mutates the cached resource.
     let responseCache = ResponseCache()
     private var streamTask: Task<Void, Never>?
@@ -500,6 +501,7 @@ final class HabitBackendStore: ObservableObject {
         accountabilityRepository  = AccountabilityRepository(client: client)
         deviceRepository          = DeviceRepository(client: client)
         preferencesRepository     = PreferencesRepository(client: client)
+        sleepSnapshotRepository   = SleepSnapshotRepository(client: client)
 
         // Cold launch with a previously-saved session: open the per-user
         // SSE stream so cross-device sync works on app relaunches, not
@@ -893,6 +895,22 @@ final class HabitBackendStore: ObservableObject {
         } catch {
             return nil
         }
+    }
+
+    /// Push the local sleep snapshot to the backend so other devices
+    /// (notably macOS, where HK isn't available) can read what iOS
+    /// computed. Fire-and-forget — failures don't bubble up to the UI.
+    func uploadSleepSnapshot(_ snapshot: BackendSleepSnapshot) async {
+        guard token != nil else { return }
+        _ = try? await sleepSnapshotRepository.upload(snapshot)
+    }
+
+    /// Read the most recent server-side snapshot. Used by macOS to
+    /// hydrate `SleepInsightsService` when local HK data isn't available.
+    /// Returns nil on no-row, network failure, or unauthenticated state.
+    func fetchSleepSnapshot() async -> BackendSleepSnapshot? {
+        guard token != nil else { return nil }
+        return try? await sleepSnapshotRepository.fetch()
     }
 
     func createHabit(

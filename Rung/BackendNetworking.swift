@@ -1030,6 +1030,56 @@ struct AccountabilityRepository {
     private struct EmptyResponse: Decodable {}
 }
 
+// MARK: - Sleep snapshot
+
+/// Cross-device sleep snapshot. iOS uploads what it computed locally
+/// from HealthKit; macOS reads it back because HK isn't available on
+/// native Mac apps. Mirrors the backend's `SleepSnapshotResponse` DTO.
+struct BackendSleepSnapshot: Codable, Equatable {
+    let sampleCount: Int
+    let medianWakeMinutes: Int
+    let medianBedMinutes: Int
+    let averageDurationHours: Double
+    let sleepDebtHours: Double
+    let medianSleepMidpointMinutes: Int?
+    let midpointIqrMinutes: Int
+    let chronotypeStable: Bool
+    /// Server-stamped — not sent on upload, decoded on read so the Mac
+    /// can dim the readout when the iPhone hasn't synced lately.
+    let updatedAt: Date?
+}
+
+struct SleepSnapshotRepository {
+    let client: BackendAPIClient
+
+    /// Push the current snapshot to the backend so other devices can read
+    /// it. Idempotent: server stores one row per user, overwritten in place.
+    @discardableResult
+    func upload(_ snapshot: BackendSleepSnapshot) async throws -> BackendSleepSnapshot {
+        try await client.authorizedRequest(
+            path: "/api/sleep/snapshot",
+            method: "POST",
+            body: snapshot
+        )
+    }
+
+    /// Fetch the most recent snapshot. Returns nil when the server has
+    /// no row yet for this user (204 No Content).
+    func fetch() async throws -> BackendSleepSnapshot? {
+        do {
+            let snap: BackendSleepSnapshot = try await client.authorizedRequest(
+                path: "/api/sleep/snapshot",
+                method: "GET"
+            )
+            return snap
+        } catch HabitBackendError.invalidResponse {
+            // 204 lands here — the decoder fails on an empty body. Treat
+            // as "no snapshot yet" so the Mac shows its empty state.
+            return nil
+        }
+    }
+}
+
 // MARK: - Error
 
 enum HabitBackendError: LocalizedError {

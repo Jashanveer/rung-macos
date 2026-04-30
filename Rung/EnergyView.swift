@@ -24,6 +24,7 @@ struct EnergyView: View {
                     headerSection(snapshot: snapshot, forecast: forecast)
                     EnergyCurveChart(forecast: forecast)
                         .frame(height: 180)
+                    staleDataNoticeIfNeeded()
                     sleepDebtSection(snapshot: snapshot)
                     recommendationsSection(forecast: forecast)
                     bedtimeSection(snapshot: snapshot)
@@ -140,21 +141,50 @@ struct EnergyView: View {
         )
     }
 
+    /// Stale-data warning surfaced only on macOS when the iPhone hasn't
+    /// synced in > 3 days. The model is still useful (chronotype doesn't
+    /// shift overnight), but the sleep-debt readout drifts further from
+    /// reality every day, so we tell the user to bring iOS up to date.
+    @ViewBuilder
+    private func staleDataNoticeIfNeeded() -> some View {
+        #if os(macOS)
+        if let updated = service.snapshotUpdatedAt {
+            let age = Date().timeIntervalSince(updated)
+            if age > 3 * 86_400 {
+                let days = Int(age / 86_400)
+                InsightRow(
+                    systemImage: "iphone.gen3.slash",
+                    tint: .orange,
+                    primary: "Last synced \(days)d ago from iPhone",
+                    secondary: "Open Rung on your phone to refresh sleep data — your energy debt and chronotype will drift the longer this stays stale."
+                )
+            }
+        }
+        #else
+        EmptyView()
+        #endif
+    }
+
     @ViewBuilder
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "moon.zzz")
+            Image(systemName: emptyStateIcon)
                 .font(.system(size: 44, weight: .medium))
                 .foregroundStyle(.indigo.opacity(0.5))
                 .padding(.top, 28)
-            Text("Not enough sleep data yet")
+            Text(emptyStateTitle)
                 .font(.system(size: 18, weight: .semibold, design: .rounded))
-            Text("Rung needs three nights of sleep tracking from Apple Health to model your energy curve. Wear your Apple Watch overnight, or log sleep in the Health app, then check back here.")
+                .multilineTextAlignment(.center)
+            Text(emptyStateBody)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 12)
 
+            #if os(iOS)
+            // Only iOS can read HealthKit on a native app. macOS users
+            // get a stay-where-you-are message above instead of a button
+            // that wouldn't actually do anything.
             Button {
                 Task {
                     try? await VerificationService.shared.requestAuthorization()
@@ -179,8 +209,33 @@ struct EnergyView: View {
                 .foregroundStyle(.pink)
             }
             .buttonStyle(.plain)
+            #endif
         }
         .padding(.vertical, 30)
+    }
+
+    private var emptyStateIcon: String {
+        #if os(macOS)
+        return "iphone.gen3"
+        #else
+        return "moon.zzz"
+        #endif
+    }
+
+    private var emptyStateTitle: String {
+        #if os(macOS)
+        return "Track sleep on your iPhone"
+        #else
+        return "Not enough sleep data yet"
+        #endif
+    }
+
+    private var emptyStateBody: String {
+        #if os(macOS)
+        return "Apple Health is only available on iPhone. Open Rung on your phone, grant Health access, and your energy curve will sync here automatically once you've logged a few nights of sleep."
+        #else
+        return "Rung needs three nights of sleep tracking from Apple Health to model your energy curve. Wear your Apple Watch overnight, or log sleep in the Health app, then check back here."
+        #endif
     }
 
     // MARK: - Helpers
