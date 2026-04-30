@@ -881,6 +881,20 @@ final class HabitBackendStore: ObservableObject {
         }
     }
 
+    /// LLM frequency-parse fallback. Returns `nil` if the user isn't
+    /// authenticated, the network call fails, or the LLM couldn't extract
+    /// a cadence. Callers fall through to the user's untouched input on
+    /// nil — never block the UX waiting for AI.
+    func parseHabitFrequencyWithAI(text: String) async -> ParseFrequencyResult? {
+        guard token != nil else { return nil }
+        do {
+            let result = try await habitRepository.parseHabitFrequency(text: text)
+            return result.didMatch ? result : nil
+        } catch {
+            return nil
+        }
+    }
+
     func createHabit(
         title: String,
         reminderWindow: String? = nil,

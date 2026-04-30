@@ -30,6 +30,19 @@ enum FrequencyParser {
         static let empty = ParseResult(cleanedTitle: "", weeklyTarget: nil, didMatch: false)
     }
 
+    /// True when `raw` contains a hint that the user is *trying* to encode
+    /// a cadence — but the regex pass missed. Triggers the LLM fallback in
+    /// the dashboard's add flow. Conservative on purpose so we don't burn
+    /// AI calls on plain titles like "Read".
+    static func hasFrequencyHint(_ raw: String) -> Bool {
+        let lowered = raw.lowercased()
+        let cadenceWords = ["week", "day", "every", "daily", "weekday", "weekend", "alternate", "times", "session", "morning", "evening", "night"]
+        if cadenceWords.contains(where: { lowered.contains($0) }) { return true }
+        // A bare digit ("4x", "3 sessions") usually signals frequency.
+        if lowered.range(of: #"\d"#, options: .regularExpression) != nil { return true }
+        return false
+    }
+
     /// Best-effort parse. Always returns a result — the caller treats
     /// `didMatch == false` as "leave the user's input alone".
     static func parse(_ raw: String) -> ParseResult {
@@ -69,6 +82,10 @@ enum FrequencyParser {
     /// "four days/week". Bounds are 1-7; anything outside silently falls
     /// through (so "gym 12 times a week" doesn't suggest weeklyTarget=12).
     private static func matchExplicitNumeric(_ lowered: String, _ original: String) -> ParseResult? {
+        // Patterns we want to match (case-insensitive, lowered already):
+        //   "(\d+|one|two|...) (days|times|x) (a|per|/) week"
+        //   "(\d+|...)x/week"
+        //   "(\d+|...) times weekly"
         let numberPattern = #"(\d+|one|two|three|four|five|six|seven)"#
         let connector = #"\s*(days?|times?|x|sessions?)?"#
         let separator = #"\s*(?:a|per|/|each|every)?\s*"#
@@ -95,6 +112,9 @@ enum FrequencyParser {
     /// Captures lists of weekday names: "mon wed fri", "monday and thursday",
     /// "on tue, thu". Counts unique weekdays and returns that as the target.
     private static func matchWeekdayList(_ lowered: String, _ original: String) -> ParseResult? {
+        // Build a master regex that finds any weekday token in the string,
+        // then count distinct hits. The cleaned title drops every matched
+        // span plus surrounding "on" / "every" / commas / "and"s.
         let dayPattern = #"\b(mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b"#
         guard let dayRegex = try? NSRegularExpression(pattern: dayPattern, options: [.caseInsensitive]) else {
             return nil
@@ -113,6 +133,8 @@ enum FrequencyParser {
         }
         guard !distinctDays.isEmpty else { return nil }
 
+        // Strip the weekday clause plus its leading conjunctions ("on",
+        // "every", commas, "and") so "yoga on Mon and Wed" → "yoga".
         let connectorPattern = #"(?:\b(?:on|every|each)\s+)?(?:[\s,]+(?:and|&)\s+|\s*,\s*|\s+)*"#
         let combinedPattern = "\(connectorPattern)(?:\(dayPattern)(?:[\\s,]+(?:and|&)\\s+|\\s*,\\s*|\\s+)?)+"
         let cleaned: String
@@ -213,6 +235,7 @@ enum FrequencyParser {
 
     private static func removeMatches(_ matches: [NSTextCheckingResult], from source: String) -> String {
         var result = source
+        // Walk from the end so earlier indexes don't shift.
         for match in matches.reversed() {
             if let r = Range(match.range, in: result) {
                 result.removeSubrange(r)

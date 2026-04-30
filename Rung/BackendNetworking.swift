@@ -198,6 +198,15 @@ private enum JWTTokenInspector {
 
 // MARK: - BackendAuthTokens
 
+/// Mirrors the backend's `ParseFrequencyResponse` DTO. `didMatch=false`
+/// means the LLM couldn't extract a cadence — clients should leave the
+/// user's input untouched in that case.
+struct ParseFrequencyResult: Decodable {
+    let cleanedTitle: String
+    let weeklyTarget: Int?
+    let didMatch: Bool
+}
+
 struct BackendAuthTokens: Decodable {
     let accessToken: String
     let refreshToken: String?
@@ -692,6 +701,24 @@ struct HabitRepository {
                 createdAt: task.createdAt
             )
         }
+    }
+
+    /// LLM fallback for the dashboard's frequency parser. Called only when
+    /// the local regex pass missed but the input contains hint keywords
+    /// (numbers + "week" / "every" / "day"). Returns nil on any failure
+    /// — caller falls back to the user's untouched input. Short timeout
+    /// because the user is waiting on the confirmation card to appear.
+    func parseHabitFrequency(text: String) async throws -> ParseFrequencyResult {
+        let response: ParseFrequencyResult = try await client.authorizedRequest(
+            path: "/api/habits/parse-frequency",
+            method: "POST",
+            body: ParseFrequencyRequestBody(text: text)
+        )
+        return response
+    }
+
+    private struct ParseFrequencyRequestBody: Encodable {
+        let text: String
     }
 
     func createHabit(

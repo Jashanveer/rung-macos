@@ -23,6 +23,9 @@ struct AddHabitBar: View {
     @Binding var selectedType: HabitEntryType
     var hasOverdueTask: Bool = false
     var hasDuplicateEntry: Bool = false
+    /// Optional backend store used for the LLM frequency-parse fallback.
+    /// Nil disables the fallback — only the local regex pass runs.
+    var backendStore: HabitBackendStore? = nil
     /// Commits a new habit / task. The trailing optionals carry any
     /// canonical-match + weekly-target selection collected by the
     /// confirmation card shown for habit-type adds. Tasks always pass nil
@@ -34,6 +37,10 @@ struct AddHabitBar: View {
     @State private var dueAt: Date? = nil
     @State private var showDuePicker = false
     @State private var taskPriority: TaskPriority? = nil
+    /// True while the LLM frequency fallback is in flight. Keeps the user
+    /// looking at a single "thinking" affordance instead of a flickering
+    /// confirmation card that pops, then re-mutates a half-second later.
+    @State private var isParsingWithAI = false
     @FocusState private var fieldFocused: Bool
 
     /// Populated once the user taps Add on a habit-type entry — surfaces an
@@ -346,10 +353,48 @@ struct AddHabitBar: View {
         // week"), the parser pre-fills the matching pill and drops the
         // clause from the title — they can still override either choice.
         let parsed = FrequencyParser.parse(trimmed)
-        let workingTitle = parsed.didMatch && !parsed.cleanedTitle.isEmpty
-            ? parsed.cleanedTitle
-            : trimmed
-        let presetTarget = parsed.didMatch ? snapWeeklyTarget(parsed.weeklyTarget) : nil
+
+        if parsed.didMatch {
+            applyParseResult(parsed, fallbackText: trimmed)
+            return
+        }
+
+        // Regex didn't catch it — try the backend LLM fallback if the user
+        // gave us a real hint (numbers / "week" / "day" / etc) AND we have
+        // an authenticated session. Otherwise skip straight to the card.
+        if let store = backendStore, FrequencyParser.hasFrequencyHint(trimmed) {
+            isParsingWithAI = true
+            fieldFocused = false
+            Task {
+                let aiResult = await store.parseHabitFrequencyWithAI(text: trimmed)
+                await MainActor.run {
+                    isParsingWithAI = false
+                    if let aiResult, aiResult.didMatch, !aiResult.cleanedTitle.isEmpty {
+                        let synthesised = FrequencyParser.ParseResult(
+                            cleanedTitle: aiResult.cleanedTitle,
+                            weeklyTarget: aiResult.weeklyTarget,
+                            didMatch: true
+                        )
+                        applyParseResult(synthesised, fallbackText: trimmed)
+                    } else {
+                        applyParseResult(.empty, fallbackText: trimmed)
+                    }
+                }
+            }
+            return
+        }
+
+        applyParseResult(.empty, fallbackText: trimmed)
+    }
+
+    /// Assemble the inline confirmation card from a parse result. Treats
+    /// `result.didMatch == false` as "use the user's untouched input" so
+    /// the LLM-miss path collapses into the original behaviour.
+    private func applyParseResult(_ result: FrequencyParser.ParseResult, fallbackText: String) {
+        let workingTitle = result.didMatch && !result.cleanedTitle.isEmpty
+            ? result.cleanedTitle
+            : fallbackText
+        let presetTarget = result.didMatch ? snapWeeklyTarget(result.weeklyTarget) : nil
         let match = CanonicalHabits.match(userTitle: workingTitle)
         pendingHabit = PendingHabitAdd(
             title: workingTitle,

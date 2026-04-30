@@ -38,27 +38,29 @@ enum FocusPhase: String, CaseIterable {
         }
     }
 
-    /// Three-stop gradient palette per phase. Indexes deliberately tuned
-    /// for high contrast against white SF Symbols on top.
+    /// Three-stop gradient palette per phase. Tuned **deep + desaturated**
+    /// rather than fluorescent — the original palette was painfully bright
+    /// in low-light evening sessions. White SF Symbols and digits on top
+    /// still read fine against these darker stops.
     var palette: [Color] {
         switch self {
         case .focus:
             return [
-                Color(red: 1.00, green: 0.42, blue: 0.20),  // burnt orange
-                Color(red: 0.92, green: 0.18, blue: 0.34),  // crimson
-                Color(red: 0.62, green: 0.05, blue: 0.42),  // deep magenta
+                Color(red: 0.42, green: 0.16, blue: 0.10),  // deep amber
+                Color(red: 0.32, green: 0.07, blue: 0.16),  // burgundy
+                Color(red: 0.18, green: 0.04, blue: 0.20),  // dark plum
             ]
         case .shortBreak:
             return [
-                Color(red: 0.18, green: 0.62, blue: 0.95),  // sky
-                Color(red: 0.13, green: 0.42, blue: 0.78),  // deep blue
-                Color(red: 0.07, green: 0.22, blue: 0.55),  // navy
+                Color(red: 0.10, green: 0.22, blue: 0.42),  // deep indigo
+                Color(red: 0.05, green: 0.14, blue: 0.32),  // night blue
+                Color(red: 0.03, green: 0.08, blue: 0.20),  // midnight
             ]
         case .longBreak:
             return [
-                Color(red: 0.16, green: 0.78, blue: 0.55),  // mint
-                Color(red: 0.10, green: 0.55, blue: 0.42),  // forest
-                Color(red: 0.05, green: 0.32, blue: 0.30),  // pine
+                Color(red: 0.07, green: 0.32, blue: 0.24),  // emerald
+                Color(red: 0.04, green: 0.22, blue: 0.18),  // forest
+                Color(red: 0.02, green: 0.14, blue: 0.14),  // pine
             ]
         }
     }
@@ -266,17 +268,24 @@ struct FocusModeView: View {
     var body: some View {
         if let session = controller.session {
             ZStack {
+                // Hard black floor so the gradient never washes brighter
+                // than the colour stops — guarantees an evening-friendly
+                // ceiling even on max-bright OLED panels.
+                Color.black.ignoresSafeArea()
+
                 animatedBackground(for: session.phase)
                     .ignoresSafeArea()
 
                 FocusBlobs(palette: session.phase.palette, animate: animateBlobs)
                     .ignoresSafeArea()
-                    .blendMode(.plusLighter)
-                    .opacity(0.55)
+                    .blendMode(.softLight)
+                    .opacity(0.30)
 
                 content(session: session)
             }
-            .preferredColorScheme(.dark)
+            // Intentionally NOT forcing .preferredColorScheme(.dark) — the
+            // immersive surface is colour-driven, not scheme-driven, and
+            // forcing dark would yank the rest of the app dark on dismiss.
             .onAppear {
                 withAnimation(.easeInOut(duration: 6).repeatForever(autoreverses: true)) {
                     animateBlobs = true

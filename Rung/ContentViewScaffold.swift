@@ -74,7 +74,10 @@ struct ContentViewScaffold: View {
                 isFrozenToday: backend.dashboard?.rewards.frozenDates.contains(todayKey) ?? false,
                 onAddHabit: onAddHabit,
                 onToggleHabit: onToggleHabit,
-                onDeleteHabit: onDeleteHabit
+                onDeleteHabit: onDeleteHabit,
+                onFreezeToday: { Task { await backend.useStreakFreeze(dateKey: todayKey) } },
+                freezesAvailable: backend.dashboard?.rewards.freezesAvailable ?? 0,
+                backendStore: backend
             )
             .frame(maxWidth: 860)
             .padding(.horizontal, 28)
