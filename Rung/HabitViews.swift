@@ -1052,8 +1052,25 @@ struct HabitListSection: View {
     var stampNamespace: Namespace.ID? = nil
     var isFrozenToday: Bool = false
 
+    /// Pulled once per list refresh. Per-habit slices feed each card's
+    /// timing-stats pill. SwiftData diffs efficiently so this stays cheap
+    /// even as the completion table grows.
+    @Query private var allCompletions: [HabitCompletion]
+
     private var doneCount: Int {
         habits.filter { $0.completedDayKeys.contains(todayKey) }.count
+    }
+
+    /// Per-habit timing stats keyed by `habit.localUUID`. Computed once
+    /// per render from the SwiftData @Query. Habits without a localUUID
+    /// (legacy rows that haven't been touched yet) get `.empty`.
+    private var statsByHabit: [UUID: HabitTimingStats] {
+        let grouped = HabitTimingStatsCalculator.groupByHabitLocalId(allCompletions)
+        var out: [UUID: HabitTimingStats] = [:]
+        for (id, slice) in grouped {
+            out[id] = HabitTimingStatsCalculator.compute(from: slice)
+        }
+        return out
     }
 
     /// Tasks float ahead of habits and are ordered high→medium→low→none by
@@ -1105,7 +1122,8 @@ struct HabitListSection: View {
                         onDelete: onDelete,
                         cluster: cluster(for: habit),
                         stampNamespace: stampNamespace,
-                        isFrozen: isFrozenToday
+                        isFrozen: isFrozenToday,
+                        timingStats: habit.localUUID.flatMap { statsByHabit[$0] }
                     )
                 }
             }
@@ -1182,6 +1200,9 @@ struct HabitCard: View {
     /// visually (icy-blue, snowflake) without mutating the underlying
     /// `completedDayKeys` — local metrics remain the source of truth.
     var isFrozen: Bool = false
+    /// Per-habit "usually 7:42 AM · 18 min" rollup, computed by the parent
+    /// from `[HabitCompletion]`. Nil for habits without enough samples.
+    var timingStats: HabitTimingStats? = nil
 
     @State private var isHovered = false
     @State private var showArchiveConfirm = false
@@ -1349,6 +1370,14 @@ struct HabitCard: View {
                     }
                 }
                 .font(.caption2.weight(.semibold))
+
+                // "Usually 7:42 AM · 18 min · ▼12% faster" — only renders
+                // when the parent passed timing stats AND there's at least
+                // one populated field. Hidden on auto-verified habits to
+                // avoid stacking metadata under the existing pink status.
+                if let timingStats, timingStats.isPresentable, !isAutoVerified {
+                    HabitTimingStatsPill(stats: timingStats)
+                }
             }
 
             Spacer(minLength: 4)
@@ -1444,6 +1473,74 @@ struct HabitCard: View {
 }
 
 // MARK: - Sync status badge
+
+/// Inline rollup pill rendered under the streak label: "Usually 7:42 AM ·
+/// 18 min · ▼ 12% faster". Each segment is conditional so a habit with
+/// only a time-of-day median doesn't show empty separators. Tinted to
+/// indigo (matches the SleepSuggestionChip palette) so the user
+/// associates it with system-derived insights.
+private struct HabitTimingStatsPill: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let stats: HabitTimingStats
+
+    var body: some View {
+        let segments = orderedSegments
+        if segments.isEmpty {
+            EmptyView()
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: "clock.fill")
+                    .font(.system(size: 8, weight: .bold))
+                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                    if index > 0 {
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(segment.text)
+                        .foregroundStyle(segment.tint ?? Color.indigo)
+                }
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.indigo)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.indigo.opacity(colorScheme == .dark ? 0.16 : 0.10))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.indigo.opacity(0.22), lineWidth: 0.5)
+            )
+            .accessibilityLabel(accessibilityCopy)
+        }
+    }
+
+    private struct Segment {
+        let text: String
+        let tint: Color?
+    }
+
+    private var orderedSegments: [Segment] {
+        var out: [Segment] = []
+        if let label = stats.medianTimeOfDayLabel {
+            out.append(Segment(text: "Usually \(label)", tint: nil))
+        }
+        if let label = stats.medianDurationLabel {
+            out.append(Segment(text: label, tint: nil))
+        }
+        if let label = stats.speedDeltaLabel {
+            // Tint speed deltas so faster reads green, slower reads orange.
+            let isFaster = (stats.speedDeltaPercent ?? 0) < 0
+            out.append(Segment(text: label, tint: isFaster ? .green : .orange))
+        }
+        return out
+    }
+
+    private var accessibilityCopy: String {
+        orderedSegments.map(\.text).joined(separator: ", ")
+    }
+}
 
 /// Subtle pill rendered next to a task's title showing its priority. Hidden
 /// once the task is marked done so completed work doesn't keep shouting

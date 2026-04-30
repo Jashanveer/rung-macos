@@ -563,11 +563,22 @@ struct ContentView: View {
         let habitSourceRaw = habit.verificationSourceRaw
         // If the user just finished a Focus Mode session for this habit/task
         // (within the last 5 minutes), attribute that session length as the
-        // duration. Lets the speed-trend stats show real numbers without
-        // forcing the user to time anything by hand.
-        let focusDuration = wasUnchecked
-            ? FocusController.shared.recentlyCompletedDuration(for: habit.title)
-            : nil
+        // duration. Capped per-canonical so e.g. a 25-min focus session that
+        // gets toggled-off as "drink water" doesn't poison the median —
+        // anything beyond the canonical's plausible max is discarded
+        // entirely (returning nil) instead of clamped, so the stats card
+        // never displays a wrong-but-plausible-looking number.
+        let focusDuration: Int? = {
+            guard wasUnchecked,
+                  let raw = FocusController.shared.recentlyCompletedDuration(for: habit.title)
+            else { return nil }
+            guard let cap = CanonicalHabits.plausibleMaxDurationSeconds(for: habit.canonicalKey) else {
+                // nil cap means "duration doesn't make semantic sense for
+                // this habit" (sleep, no-alcohol, screen-time) — drop it.
+                return nil
+            }
+            return raw <= cap ? raw : nil
+        }()
         Task {
             do {
                 switch habit.entryType {
