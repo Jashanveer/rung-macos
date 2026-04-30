@@ -2,6 +2,8 @@ import SwiftData
 import SwiftUI
 
 struct ContentViewScaffold: View {
+    @StateObject private var focusController = FocusController.shared
+
     let colorScheme: ColorScheme
     let habits: [Habit]
     let todayKey: String
@@ -30,7 +32,7 @@ struct ContentViewScaffold: View {
     /// the panel's frame on open and back on close.
     @Namespace private var panelMorph
 
-    let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?) -> Void
+    let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?, TaskPriority?) -> Void
     let onToggleHabit: (Habit) -> Void
     let onDeleteHabit: (Habit) -> Void
     let onSync: () -> Void
@@ -289,6 +291,14 @@ struct ContentViewScaffold: View {
             .transition(.opacity)
             .zIndex(200)
         }
+        .overlay {
+            if focusController.isImmersivePresented {
+                FocusModeView(controller: focusController)
+                    .zIndex(500)
+                    .transition(.opacity.combined(with: .scale(scale: 1.04)))
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: focusController.isImmersivePresented)
         .frame(minWidth: 900, minHeight: 600)
     }
 }

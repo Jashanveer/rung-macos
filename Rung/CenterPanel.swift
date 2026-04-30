@@ -15,9 +15,18 @@ struct CenterPanel: View {
     /// Today is protected by a streak freeze. When true the list renders every
     /// habit in its frozen (icy-blue) state and does not hide completed ones.
     var isFrozenToday: Bool = false
-    let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?) -> Void
+    let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?, TaskPriority?) -> Void
     let onToggleHabit: (Habit) -> Void
     let onDeleteHabit: (Habit) -> Void
+    /// Optional handler invoked when the calendar banner's "freeze today"
+    /// CTA is tapped. Caller is responsible for spending a freeze (backend
+    /// call + UI refresh). Nil disables the CTA — the banner still renders.
+    var onFreezeToday: (() -> Void)? = nil
+    /// Number of streak freezes the user owns. Drives whether the freeze
+    /// CTA appears in the calendar banner.
+    var freezesAvailable: Int = 0
+
+    @StateObject private var calendarService = CalendarService.shared
 
     @State private var aiGreeting: String?
     @State private var hasRequestedGreeting = false
@@ -61,6 +70,13 @@ struct CenterPanel: View {
             }
 
             TodayHeader(greeting: displayGreeting, isCompact: isCompact)
+
+            CalendarInsightsBanner(
+                service: calendarService,
+                hasIncompleteHabits: !pendingHabits.isEmpty,
+                freezesAvailable: freezesAvailable,
+                onFreezeToday: { onFreezeToday?() }
+            )
 
             AddHabitBar(
                 newHabitTitle: $newHabitTitle,

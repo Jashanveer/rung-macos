@@ -183,7 +183,8 @@ struct ContentView: View {
         _ entryType: HabitEntryType,
         dueAt: Date? = nil,
         canonical: CanonicalHabit? = nil,
-        weeklyTarget: Int? = nil
+        weeklyTarget: Int? = nil,
+        priority: TaskPriority? = nil
     ) {
         let title = newHabitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
@@ -221,7 +222,8 @@ struct ContentView: View {
             verificationSource: canonical?.source,
             verificationParam: canonical?.param,
             canonicalKey: canonical?.key,
-            weeklyTarget: entryType == .habit ? weeklyTarget : nil
+            weeklyTarget: entryType == .habit ? weeklyTarget : nil,
+            priority: entryType == .task ? priority : nil
         )
         withAnimation { modelContext.insert(localHabit) }
         newHabitTitle = ""
@@ -736,16 +738,38 @@ struct ContentView: View {
         return false
     }
 
+    /// Snap a parsed weekly target onto something the rest of the app
+    /// understands. Daily / 7+ → nil so the habit renders as a daily
+    /// commitment instead of a synthetic 7×/week target.
+    private func snapWeeklyTargetForOnboarding(_ raw: Int?) -> Int? {
+        guard let raw else { return nil }
+        if raw >= 7 { return nil }
+        return raw
+    }
+
     private func completeOnboarding(_ habitTitles: [String]) {
         // Dedupe across both the existing habit list and earlier entries in
         // this same batch — the SwiftData @Query doesn't re-fire inside the
         // loop, so a local seen-set is the only way to catch duplicates that
         // appear back-to-back in `habitTitles`.
         var seen = Set(habits.map { Habit.duplicateMatchKey($0.title) })
-        for title in habitTitles {
-            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        for rawTitle in habitTitles {
+            let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            let key = Habit.duplicateMatchKey(trimmed)
+
+            // Parse out frequency hints ("gym 4 days a week" → "gym" + 4)
+            // here too, mirroring the dashboard AddHabitBar behaviour so
+            // the user gets the same auto-frequency wherever they enter
+            // a habit. Falls back to the raw title if nothing matched.
+            let parsed = FrequencyParser.parse(trimmed)
+            let cleanedTitle = parsed.didMatch && !parsed.cleanedTitle.isEmpty
+                ? parsed.cleanedTitle
+                : trimmed
+            let weeklyTarget = parsed.didMatch
+                ? snapWeeklyTargetForOnboarding(parsed.weeklyTarget)
+                : nil
+
+            let key = Habit.duplicateMatchKey(cleanedTitle)
             guard !seen.contains(key) else { continue }
             seen.insert(key)
             // Run the canonical matcher so onboarding-staged titles like
@@ -753,15 +777,16 @@ struct ContentView: View {
             // HealthKit verification — without this, the habit shows up
             // as a plain manual-toggle entry and the user has to delete
             // and re-add it via AddHabitBar to get the verify path.
-            let canonical = CanonicalHabits.match(userTitle: trimmed)
+            let canonical = CanonicalHabits.match(userTitle: cleanedTitle)
             let habit = Habit(
-                title: trimmed,
+                title: cleanedTitle,
                 entryType: .habit,
                 syncStatus: .pending,
                 verificationTier: canonical?.tier ?? .selfReport,
                 verificationSource: canonical?.source,
                 verificationParam: canonical?.param,
-                canonicalKey: canonical?.key
+                canonicalKey: canonical?.key,
+                weeklyTarget: weeklyTarget
             )
             modelContext.insert(habit)
         }

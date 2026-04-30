@@ -21,8 +21,6 @@ struct OnboardingView: View {
     @FocusState private var fieldFocused: Bool
 
     @State private var phase: OnboardingPhase = .inputHabits
-    @State private var hasRequestedHealthKit = false
-    @State private var healthKitRequesting = false
     @State private var hasRequestedNotifications = false
     @State private var notificationsRequesting = false
     @State private var showVerificationHelp = false
@@ -247,16 +245,6 @@ struct OnboardingView: View {
                 action: requestNotifications
             )
 
-            permissionRow(
-                systemImage: "heart.text.square.fill",
-                tint: .pink,
-                title: "Apple Health",
-                subtitle: "Auto-verify workouts, steps, mindful minutes, sleep, and more.",
-                granted: hasRequestedHealthKit,
-                busy: healthKitRequesting,
-                action: requestHealthKit
-            )
-
             Button(action: beginExit) {
                 Text("Continue →")
                     .font(.system(size: 15, weight: .semibold))
@@ -369,18 +357,6 @@ struct OnboardingView: View {
         fieldFocused = false
         withAnimation(.spring(response: 0.5, dampingFraction: 0.84)) {
             phase = .permissions
-        }
-    }
-
-    private func requestHealthKit() {
-        guard !hasRequestedHealthKit, !healthKitRequesting else { return }
-        healthKitRequesting = true
-        Task {
-            try? await VerificationService.shared.requestAuthorization()
-            await MainActor.run {
-                hasRequestedHealthKit = true
-                healthKitRequesting = false
-            }
         }
     }
 

@@ -87,6 +87,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.registerForRemoteNotifications()
             }
         }
+
+        // Install the menu-bar focus timer. The status item stays hidden
+        // until the user starts a focus session and self-removes when they
+        // cancel — no menu-bar clutter for users who never use it.
+        FocusStatusBarController.shared.install()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Activating the app counts as "user has seen the notifications" —
+        // clear the dock badge and the delivered tray so the icon doesn't
+        // accumulate stale counts.
+        clearDeliveredNotifications()
     }
 
     // APNs sends the device token here after successful registration.
@@ -122,6 +134,42 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .sound])
+    }
+
+    /// User clicked a notification — treat as read: drop it from the tray
+    /// and zero the badge so the dock doesn't keep showing stale counts.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let identifier = response.notification.request.identifier
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
+        Task { @MainActor in
+            BadgeReset.clear()
+        }
+        completionHandler()
+    }
+
+    fileprivate func clearDeliveredNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllDeliveredNotifications()
+        Task { @MainActor in
+            BadgeReset.clear()
+        }
+    }
+}
+
+/// Cross-platform helper for zeroing the app icon badge. macOS 13+ uses
+/// `setBadgeCount` on the notification center; the dock tile label is
+/// cleared explicitly as a backstop for older releases that ignore it.
+enum BadgeReset {
+    @MainActor
+    static func clear() {
+        if #available(macOS 13.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(0) { _ in }
+        }
+        NSApp?.dockTile.badgeLabel = nil
     }
 }
 

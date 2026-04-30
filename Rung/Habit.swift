@@ -39,6 +39,48 @@ enum HabitEntryType: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Task priority — three buckets so users can quickly triage without
+/// agonising over fine-grained ordering. Stored as a raw String so
+/// SwiftData can persist it directly and a forward-compatible client
+/// never crashes on an unknown future case.
+enum TaskPriority: String, Codable, CaseIterable, Identifiable, Comparable {
+    case low
+    case medium
+    case high
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .low:    return "Low"
+        case .medium: return "Medium"
+        case .high:   return "High"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .low:    return "arrow.down.circle.fill"
+        case .medium: return "minus.circle.fill"
+        case .high:   return "exclamationmark.circle.fill"
+        }
+    }
+
+    /// Numeric weight used for sorting (higher first). Nil priority sorts
+    /// after `.low` so unprioritised tasks fall to the bottom by default.
+    var sortWeight: Int {
+        switch self {
+        case .low:    return 1
+        case .medium: return 2
+        case .high:   return 3
+        }
+    }
+
+    static func < (lhs: TaskPriority, rhs: TaskPriority) -> Bool {
+        lhs.sortWeight < rhs.sortWeight
+    }
+}
+
 /// How confidently a habit's completion can be verified against a trusted data source.
 /// Drives point multipliers on the leaderboard so self-reported checks can't out-earn
 /// checks backed by HealthKit or Screen Time evidence.
@@ -147,6 +189,11 @@ final class Habit {
     /// first use without racing migration.
     var localUUID: UUID? = nil
 
+    /// Raw `TaskPriority`; nil means "not prioritised" (default). Optional
+    /// so legacy SwiftData rows lightweight-migrate without a migration plan.
+    /// Only meaningful for `entryType == .task`; habits ignore this field.
+    var priorityRaw: String? = nil
+
     /// Backward-compatible entry kind accessor.
     /// Older stores may contain missing/invalid values; those fall back to `.habit`.
     var entryType: HabitEntryType {
@@ -160,8 +207,7 @@ final class Habit {
 
     /// Two-tier canonical lookup for the verification getters below.
     /// Used to recover auto-verified rendering when the backend or sync
-    /// pipeline somehow drops the verification fields between iPhone
-    /// (where the habit was created with a canonical match) and macOS.
+    /// pipeline somehow drops the verification fields.
     ///
     /// 1. Match by `canonicalKey` if set — preserves user intent precisely.
     /// 2. As a last resort, match the habit's title against the canonical
@@ -210,6 +256,28 @@ final class Habit {
         set { verificationSourceRaw = newValue?.rawValue }
     }
 
+    /// Verification query parameter (workout activity type code, step
+    /// threshold, etc.) with the same canonical fallback as
+    /// `verificationSource`. iPhone's `AutoVerificationCoordinator` reads
+    /// this — without the fallback, a habit synced from a peer device
+    /// that lost `verificationParam` would auto-flag as HealthKit but
+    /// the verifier would query "any workout" instead of (say) running.
+    /// Returns the stored value when present so explicit user choices
+    /// always win over the canonical default.
+    var effectiveVerificationParam: Double? {
+        if let p = verificationParam { return p }
+        return effectiveCanonical?.param
+    }
+
+    /// Typed accessor for `priorityRaw`. Unknown raw values fall back to
+    /// nil so a forward-compatible client never crashes on a priority
+    /// introduced later. Setter writes nil for nil values so legacy rows
+    /// stay legacy until the user actually picks a priority.
+    var priority: TaskPriority? {
+        get { priorityRaw.flatMap(TaskPriority.init(rawValue:)) }
+        set { priorityRaw = newValue?.rawValue }
+    }
+
     init(
         title: String,
         entryType: HabitEntryType = .habit,
@@ -229,7 +297,8 @@ final class Habit {
         verificationParam: Double? = nil,
         canonicalKey: String? = nil,
         weeklyTarget: Int? = nil,
-        localUUID: UUID? = UUID()
+        localUUID: UUID? = UUID(),
+        priority: TaskPriority? = nil
     ) {
         self.title = title
         self.entryTypeRawValue = entryType.rawValue
@@ -250,6 +319,7 @@ final class Habit {
         self.canonicalKey = canonicalKey
         self.weeklyTarget = weeklyTarget
         self.localUUID = localUUID
+        self.priorityRaw = priority?.rawValue
     }
 
     // MARK: - Convenience
@@ -259,13 +329,16 @@ final class Habit {
         entryType == .task && !completedDayKeys.isEmpty
     }
 
-    /// Task is past its due date (and not yet done). Habits ignore this.
-    /// Compared by calendar day: a task due today is not overdue until tomorrow.
-    /// Tasks without a due date are never overdue.
+    /// Task is strictly past its due date (and not yet done). A task whose
+    /// due date is *today* is still on time — the user has until end-of-day
+    /// to finish it, so we don't block new task creation on it. Tasks with
+    /// no due date are likewise never overdue. Habits ignore this entirely.
     func isOverdue(now: Date = Date()) -> Bool {
         guard entryType == .task, !isTaskCompleted, let due = dueAt else { return false }
         let calendar = Calendar.current
-        return calendar.startOfDay(for: due) < calendar.startOfDay(for: now)
+        let today = calendar.startOfDay(for: now)
+        let dueDay = calendar.startOfDay(for: due)
+        return dueDay < today
     }
 
     // MARK: - Weekly target & verification helpers
