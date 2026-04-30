@@ -24,11 +24,20 @@ final class SleepInsightsService: ObservableObject {
     /// least once with sufficient data.
     @Published private(set) var snapshot: SleepSnapshot?
 
+    /// Two-process energy forecast for today, derived from the snapshot's
+    /// wake/bed times and the rolling sleep debt. Refreshed alongside
+    /// `snapshot` — nil while we don't have enough data.
+    @Published private(set) var forecast: EnergyForecast?
+
     /// True while a refresh is in flight. Lets the UI dim/disable
     /// suggestion chips so the user doesn't see them flicker.
     @Published private(set) var isRefreshing = false
 
     private let store = HKHealthStore()
+
+    /// Hours of sleep we treat as "fully rested" for the purpose of
+    /// computing debt. Tunable; 8h is the population mean for adults.
+    private static let idealSleepHoursPerNight: Double = 8.0
 
     private init() {}
 
@@ -75,11 +84,55 @@ final class SleepInsightsService: ObservableObject {
         let avgDuration = nightlySamples.compactMap { $0.duration }
             .reduce(0, +) / Double(max(1, nightlySamples.count))
 
-        snapshot = SleepSnapshot(
+        // Sleep debt = sum of (ideal − actual) over the rolling window,
+        // floored at zero per night so a string of 9-hour nights doesn't
+        // bank credit (real Process S models reset, not accumulate).
+        let nightlyDebt = nightlySamples.map { night -> Double in
+            max(0, Self.idealSleepHoursPerNight - night.duration / 3600)
+        }
+        let totalDebt = nightlyDebt.reduce(0, +)
+
+        let snap = SleepSnapshot(
             sampleCount: nightlySamples.count,
             medianWakeMinutes: medianWake,
             medianBedMinutes: medianBed,
-            averageDurationHours: avgDuration / 3600
+            averageDurationHours: avgDuration / 3600,
+            sleepDebtHours: totalDebt
+        )
+        snapshot = snap
+
+        // Materialise today's energy forecast off the same snapshot so
+        // every consumer (suggestion chip, energy view, focus-time
+        // recommender) reads from the same source.
+        forecast = Self.makeForecast(snap: snap)
+    }
+
+    /// Build today's `EnergyForecast` from a snapshot. Static so unit
+    /// tests can call it without standing up the whole service.
+    static func makeForecast(snap: SleepSnapshot) -> EnergyForecast {
+        let calendar = Calendar.current
+        let now = Date()
+        let startOfToday = calendar.startOfDay(for: now)
+
+        let wakeToday = calendar.date(
+            byAdding: .minute, value: snap.medianWakeMinutes, to: startOfToday
+        ) ?? startOfToday
+
+        // Bedtime is presented "tonight" — if the median bed time is past
+        // midnight (small minute-of-day) we roll it to the next day so
+        // chart math stays monotonic.
+        var bedToday = calendar.date(
+            byAdding: .minute, value: snap.medianBedMinutes, to: startOfToday
+        ) ?? startOfToday
+        if bedToday <= wakeToday {
+            bedToday = calendar.date(byAdding: .day, value: 1, to: bedToday) ?? bedToday
+        }
+
+        return EnergyForecast(
+            wakeTime: wakeToday,
+            bedTime: bedToday,
+            sleepDebtHours: snap.sleepDebtHours,
+            sampleCount: snap.sampleCount
         )
     }
 
@@ -171,6 +224,9 @@ struct SleepSnapshot: Equatable {
     let medianWakeMinutes: Int
     let medianBedMinutes: Int
     let averageDurationHours: Double
+    /// Rolling sleep deficit (hours), summed over the snapshot window.
+    /// Drives the Process S acceleration in `EnergyForecast`.
+    let sleepDebtHours: Double
 
     /// Pretty wake time, e.g. "7:30 AM".
     var wakeTimeLabel: String { Self.label(forMinutesOfDay: medianWakeMinutes) }
@@ -243,6 +299,14 @@ struct SuggestedWindow: Equatable {
 /// Tiny inline chip that surfaces a sleep-derived best-time suggestion
 /// for the habit currently being added. Renders nothing until the user
 /// has typed at least 2 characters AND we have enough sleep data.
+///
+/// Live readout:
+/// - **Now** segment shows the user's current energy band ("Peak 78").
+/// - **Suggestion** segment picks one of three shapes depending on the
+///   habit kind:
+///     * `.movement` / `.focus` → recommends the next predicted peak.
+///     * `.calm` → recommends 90 min before typical bedtime.
+///     * `.upkeep` → keeps the existing "anchored to wake time" copy.
 struct SleepSuggestionChip: View {
     @ObservedObject var service: SleepInsightsService
     let habitTitle: String
@@ -252,20 +316,27 @@ struct SleepSuggestionChip: View {
     var body: some View {
         Group {
             if let snapshot = service.snapshot,
+               let forecast = service.forecast,
                !habitTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let kind = HabitKind.classify(habitTitle)
-                let window = snapshot.suggestedWindow(for: kind)
+                let suggestion = liveSuggestion(kind: kind, snapshot: snapshot, forecast: forecast)
+                let now = Date()
+                let energy = forecast.energy(at: now)
+                let band = EnergyForecast.label(for: energy)
 
                 HStack(spacing: 6) {
-                    Image(systemName: "moon.zzz.fill")
+                    Image(systemName: band.systemImage)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.indigo)
-                    Text("Try around \(window.label)")
+                        .foregroundStyle(bandTint(for: band))
+                    Text("\(band.label) \(Int(energy.rounded()))")
                         .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(bandTint(for: band))
                     Text("·")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.tertiary)
-                    Text(window.reason)
+                    Text(suggestion.headline)
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(suggestion.detail)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -284,5 +355,47 @@ struct SleepSuggestionChip: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.86), value: service.snapshot)
+    }
+
+    /// Pick a recommendation tailored to the habit kind. Movement/focus
+    /// habits chase the next predicted peak; calm habits anchor to the
+    /// wind-down window; upkeep falls back to the existing wake-time hint.
+    private func liveSuggestion(
+        kind: HabitKind,
+        snapshot: SleepSnapshot,
+        forecast: EnergyForecast
+    ) -> (headline: String, detail: String) {
+        let now = Date()
+        let endOfWindow = Calendar.current.date(byAdding: .hour, value: 12, to: now) ?? now
+        switch kind {
+        case .movement, .focus:
+            if let peak = forecast.nextPeak(after: now, until: endOfWindow) {
+                return (headline: "Peak at \(Self.timeString(peak))", detail: "best for \(kind == .movement ? "movement" : "deep work")")
+            }
+            // Past today's peak — fall back to the static wake-anchor copy.
+            let window = snapshot.suggestedWindow(for: kind)
+            return (headline: "Try \(window.label)", detail: window.reason)
+        case .calm:
+            let window = snapshot.suggestedWindow(for: .calm)
+            return (headline: "Try \(window.label)", detail: window.reason)
+        case .upkeep:
+            let window = snapshot.suggestedWindow(for: .upkeep)
+            return (headline: "Try \(window.label)", detail: window.reason)
+        }
+    }
+
+    private func bandTint(for band: EnergyBand) -> Color {
+        switch band {
+        case .peak:     return .green
+        case .moderate: return .indigo
+        case .dip:      return .orange
+        case .low:      return .red
+        }
+    }
+
+    private static func timeString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
     }
 }
