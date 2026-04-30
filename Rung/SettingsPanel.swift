@@ -42,6 +42,8 @@ struct SettingsPanel: View {
                     }
                 }
 
+                PermissionsStatusCard()
+
                 ProfileEditCard(backend: backend)
 
                 AccountActionsCard(backend: backend, showDeleteConfirm: $showDeleteConfirm)
