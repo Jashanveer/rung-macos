@@ -28,18 +28,27 @@ struct EnergyForecast: Equatable {
     let wakeTime: Date
     /// Today's typical bed time (median across the recent sleep window).
     let bedTime: Date
+    /// Absolute time of today's circadian alertness peak. The factory in
+    /// `SleepInsightsService.makeForecast` chooses between two modes:
+    /// - **Default** (cold-start): `wakeTime + 10h` — the canonical
+    ///   "afternoon peak" assumption for an average chronotype.
+    /// - **Chronotype-tuned** (≥ 14 stable nights of HK data): shift the
+    ///   default by the user's lark/owl tendency, derived from the
+    ///   variance of recent sleep midpoints.
+    let circadianPeak: Date
     /// Rolling sleep deficit in hours (positive = under-slept). Caps the
     /// faster-build-up effect at 5h to avoid a runaway curve.
     let sleepDebtHours: Double
     /// Sample count used to derive the snapshot — exposed so the UI can
     /// dim itself when there isn't enough data to be honest.
     let sampleCount: Int
+    /// True once we've learned the user's acrophase from their own
+    /// midpoints rather than the population default. Drives the
+    /// "Learned chronotype" badge in EnergyView.
+    let chronotypeStable: Bool
 
     /// Process S time-constant when fully rested. Rises faster under debt.
     private static let baseTau: Double = 18.18
-    /// Hours after wake when circadian alertness peaks. ~10h is the
-    /// canonical "afternoon peak" for normal chronotypes.
-    private static let acrophaseOffsetHours: Double = 10.0
 
     // MARK: - Public computations
 
@@ -110,10 +119,15 @@ struct EnergyForecast: Equatable {
         return 1 - exp(-h / tau)
     }
 
-    /// 24-hour cosine wave centred on `acrophaseOffsetHours` after wake.
-    /// Returns 0…1 — peak at the acrophase, trough exactly 12h offset.
+    /// 24-hour cosine wave centred on `circadianPeak`. Returns 0…1 —
+    /// peak at the acrophase, trough exactly 12h offset. We compute the
+    /// phase from the absolute peak time rather than a wake-relative
+    /// offset because the chronotype-tuned forecast may have shifted
+    /// the peak independently of when the user actually woke up today.
     private func circadianAlertness(hoursSinceWake h: Double) -> Double {
-        let phase = (h - Self.acrophaseOffsetHours) * 2 * .pi / 24
+        let instant = wakeTime.addingTimeInterval(h * 3600)
+        let hoursFromPeak = instant.timeIntervalSince(circadianPeak) / 3600
+        let phase = hoursFromPeak * 2 * .pi / 24
         return 0.5 + 0.5 * cos(phase)
     }
 

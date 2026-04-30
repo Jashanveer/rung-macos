@@ -68,6 +68,15 @@ struct EnergyView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
+
+            if let chronotype = snapshot.chronotype {
+                ChronotypeBadge(
+                    chronotype: chronotype,
+                    midpointLabel: snapshot.midpointLabel ?? "",
+                    peakLabel: timeString(forecast.circadianPeak)
+                )
+                .padding(.top, 4)
+            }
         }
     }
 
@@ -404,6 +413,53 @@ private struct EnergyCurveChart: View {
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.tertiary)
                 .position(x: geo.size.width * item.ratio, y: geo.size.height + 8)
+        }
+    }
+}
+
+// MARK: - Chronotype badge
+
+/// Compact pill that confirms we've learned the user's chronotype from
+/// their own midpoint variance instead of falling back to the population
+/// default. Shows the bucket (lark / neutral / owl) plus the resolved
+/// peak time so the user can sanity-check the model.
+private struct ChronotypeBadge: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let chronotype: Chronotype
+    let midpointLabel: String
+    let peakLabel: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: chronotype.systemImage)
+                .font(.system(size: 10, weight: .bold))
+            Text(chronotype.label)
+                .font(.system(size: 11, weight: .semibold))
+            Text("·")
+                .foregroundStyle(.tertiary)
+            Text("Peak \(peakLabel)")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(colorScheme == .dark ? 0.16 : 0.10))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(tint.opacity(0.24), lineWidth: 0.5)
+        )
+        .accessibilityLabel("Learned chronotype: \(chronotype.label). Sleep midpoint \(midpointLabel). Peak \(peakLabel).")
+    }
+
+    private var tint: Color {
+        switch chronotype {
+        case .lark:    return .orange
+        case .neutral: return .indigo
+        case .owl:     return .purple
         }
     }
 }

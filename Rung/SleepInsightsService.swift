@@ -39,6 +39,22 @@ final class SleepInsightsService: ObservableObject {
     /// computing debt. Tunable; 8h is the population mean for adults.
     private static let idealSleepHoursPerNight: Double = 8.0
 
+    /// Minimum nights of sleep data before we trust the user's own
+    /// midpoint variance enough to tune their acrophase. Below this we
+    /// fall back to the wake-anchored default (`wake + 10h`).
+    private static let chronotypeMinNights: Int = 14
+
+    /// Largest interquartile range (in minutes) we'll accept on the
+    /// midpoint before declaring the chronotype "unstable" and reverting
+    /// to the default. 90 min = ±45 around the median: roughly the
+    /// natural variance of an adult who keeps a consistent schedule.
+    private static let chronotypeMaxIQRMinutes: Int = 90
+
+    /// Population-mean midpoint of sleep, used as the reference point
+    /// for the lark/owl shift. ~04:00 is the canonical value across
+    /// chronotype questionnaires (MEQ, MCTQ).
+    private static let populationMidpointMinutes: Int = 4 * 60
+
     private init() {}
 
     /// Pull the last `nights` nights of sleep samples and recompute the
@@ -92,12 +108,33 @@ final class SleepInsightsService: ObservableObject {
         }
         let totalDebt = nightlyDebt.reduce(0, +)
 
+        // Sleep midpoint stats — used for chronotype detection. Midpoint
+        // is computed per-night from the actual asleep interval (not bed
+        // time), then medianed and IQR'd to decide whether the user's
+        // schedule is consistent enough to trust.
+        let midpointMinutes = nightlySamples.map { night -> Int in
+            let midpoint = night.bed.addingTimeInterval(night.duration / 2)
+            let components = calendar.dateComponents([.hour, .minute], from: midpoint)
+            return (components.hour ?? 0) * 60 + (components.minute ?? 0)
+        }
+        let medianMidpoint = medianMinutesOfDay(
+            midpointMinutes.compactMap { mins -> Date? in
+                calendar.date(byAdding: .minute, value: mins, to: calendar.startOfDay(for: end))
+            }
+        )
+        let midpointIQR = interquartileRange(midpointMinutes)
+        let chronotypeStable = nightlySamples.count >= Self.chronotypeMinNights
+            && midpointIQR <= Self.chronotypeMaxIQRMinutes
+
         let snap = SleepSnapshot(
             sampleCount: nightlySamples.count,
             medianWakeMinutes: medianWake,
             medianBedMinutes: medianBed,
             averageDurationHours: avgDuration / 3600,
-            sleepDebtHours: totalDebt
+            sleepDebtHours: totalDebt,
+            medianSleepMidpointMinutes: medianMidpoint,
+            midpointIQRMinutes: midpointIQR,
+            chronotypeStable: chronotypeStable
         )
         snapshot = snap
 
@@ -107,8 +144,28 @@ final class SleepInsightsService: ObservableObject {
         forecast = Self.makeForecast(snap: snap)
     }
 
+    /// IQR (Q3 - Q1) of an integer sample. Returns 0 when the sample is
+    /// too small to have meaningful quartiles (< 4 entries) — the caller
+    /// treats 0 as "ignore, not enough data".
+    private func interquartileRange(_ values: [Int]) -> Int {
+        guard values.count >= 4 else { return 0 }
+        let sorted = values.sorted()
+        let q1 = sorted[sorted.count / 4]
+        let q3 = sorted[(3 * sorted.count) / 4]
+        return max(0, q3 - q1)
+    }
+
     /// Build today's `EnergyForecast` from a snapshot. Static so unit
     /// tests can call it without standing up the whole service.
+    ///
+    /// Acrophase derivation:
+    /// - Default: `wakeTime + 10h` — population canonical "afternoon peak".
+    /// - Chronotype-tuned: shift the default by half the user's offset
+    ///   from the population midpoint, capped at ±3h. The 0.5 dampening
+    ///   factor prevents extreme outliers (a midpoint 4h late doesn't
+    ///   imply a 4h-late peak — the relationship is sub-linear) and the
+    ///   ±3h cap is a hard sanity bound so a brief schedule shift can't
+    ///   move the peak by more than that.
     static func makeForecast(snap: SleepSnapshot) -> EnergyForecast {
         let calendar = Calendar.current
         let now = Date()
@@ -128,11 +185,29 @@ final class SleepInsightsService: ObservableObject {
             bedToday = calendar.date(byAdding: .day, value: 1, to: bedToday) ?? bedToday
         }
 
+        let defaultPeak = wakeToday.addingTimeInterval(10 * 3600)
+        let circadianPeak: Date = {
+            guard snap.chronotypeStable,
+                  let midpointMinutes = snap.medianSleepMidpointMinutes else {
+                return defaultPeak
+            }
+            // Midpoint may be in early-morning (e.g. 03:00) — interpret as
+            // minutes-of-day directly. The shift is signed: positive
+            // (later midpoint = owl) pushes the acrophase later in the day.
+            let referenceMidpoint = populationMidpointMinutes
+            let rawShiftMinutes = Double(midpointMinutes - referenceMidpoint)
+            let dampened = rawShiftMinutes * 0.5
+            let cappedMinutes = max(-180, min(180, dampened))
+            return defaultPeak.addingTimeInterval(cappedMinutes * 60)
+        }()
+
         return EnergyForecast(
             wakeTime: wakeToday,
             bedTime: bedToday,
+            circadianPeak: circadianPeak,
             sleepDebtHours: snap.sleepDebtHours,
-            sampleCount: snap.sampleCount
+            sampleCount: snap.sampleCount,
+            chronotypeStable: snap.chronotypeStable
         )
     }
 
@@ -227,11 +302,38 @@ struct SleepSnapshot: Equatable {
     /// Rolling sleep deficit (hours), summed over the snapshot window.
     /// Drives the Process S acceleration in `EnergyForecast`.
     let sleepDebtHours: Double
+    /// Median midpoint of sleep (minute-of-day). Nil when the user has
+    /// fewer than the threshold number of nights tracked.
+    let medianSleepMidpointMinutes: Int?
+    /// Interquartile range of midpoints in minutes. Larger = more
+    /// scattered schedule. Used to gate chronotype confidence.
+    let midpointIQRMinutes: Int
+    /// True once we have ≥ 14 nights AND the midpoint IQR is ≤ 90 min.
+    /// Forecasts switch from the wake-anchored default acrophase to a
+    /// midpoint-shifted one when this is true.
+    let chronotypeStable: Bool
 
     /// Pretty wake time, e.g. "7:30 AM".
     var wakeTimeLabel: String { Self.label(forMinutesOfDay: medianWakeMinutes) }
     /// Pretty bedtime, e.g. "11:15 PM".
     var bedTimeLabel: String { Self.label(forMinutesOfDay: medianBedMinutes) }
+    /// Pretty midpoint, e.g. "3:45 AM". Nil until enough data.
+    var midpointLabel: String? {
+        medianSleepMidpointMinutes.map { Self.label(forMinutesOfDay: $0) }
+    }
+
+    /// Chronotype bucket derived from the midpoint offset vs the
+    /// population mean. Returns nil until `chronotypeStable` is true so
+    /// the UI never displays a guess.
+    var chronotype: Chronotype? {
+        guard chronotypeStable, let midpoint = medianSleepMidpointMinutes else { return nil }
+        // 4 AM is the population mean; anything > 90 min past = strong owl,
+        // > 90 min before = strong lark, in-between is neutral.
+        let delta = midpoint - 4 * 60
+        if delta < -90  { return .lark }
+        if delta > 90   { return .owl }
+        return .neutral
+    }
 
     /// Recommended best window for a generic habit, given the user's
     /// chronotype proxy. Returns absolute minutes-of-day plus a label.
@@ -264,6 +366,30 @@ struct SleepSnapshot: Equatable {
         let hour12 = ((hour24 + 11) % 12) + 1
         let am = hour24 < 12
         return String(format: "%d:%02d %@", hour12, minute, am ? "AM" : "PM")
+    }
+}
+
+/// Coarse chronotype bucket. Surfaced in the EnergyView as a small badge
+/// so the user understands *why* their peak is shifted from the default.
+enum Chronotype: String, Equatable {
+    case lark      // midpoint earlier than population mean
+    case neutral   // within ±90 min of mean
+    case owl       // midpoint later than mean
+
+    var label: String {
+        switch self {
+        case .lark:    return "Early bird"
+        case .neutral: return "Average"
+        case .owl:     return "Night owl"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .lark:    return "sunrise.fill"
+        case .neutral: return "sun.max.fill"
+        case .owl:     return "moon.stars.fill"
+        }
     }
 }
 
