@@ -11,6 +11,8 @@
 		9BD3C28B2FA1A18D00F9F0E5 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
 		FA112B4AA34979A6793FF969 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
 		FC69D715931379676998B8A7 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EAFAFB09EE3A870B45A5981A /* Cocoa.framework */; platformFilters = (macos, ); };
+		9B49CD9F2F9BD0CD001B86CD /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9B49CD9E2F9BD0CD001B86CD /* DeviceActivity.framework */; };
+		9B49CDA72F9BD0CE001B86CD /* ScreenTimeMonitor.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,6 +37,13 @@
 			remoteGlobalIDString = 9BA6DAFB2F8F3C8E009AA3BC;
 			remoteInfo = Rung;
 		};
+		9B49CDA52F9BD0CE001B86CD /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9BA6DAF42F8F3C8E009AA3BC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9B49CD9B2F9BD0CC001B86CD;
+			remoteInfo = ScreenTimeMonitor;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -44,6 +53,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				9B49CDA72F9BD0CE001B86CD /* ScreenTimeMonitor.appex in Embed App Extensions */,
 				944AB57390090127A4CAF17E /* RungWidgets.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
@@ -58,6 +68,8 @@
 		BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		C1DA33907F824AA520B8E3E6 /* RungWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RungWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EAFAFB09EE3A870B45A5981A /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ScreenTimeMonitor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9B49CD9E2F9BD0CD001B86CD /* DeviceActivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DeviceActivity.framework; path = System/Library/Frameworks/DeviceActivity.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -74,6 +86,13 @@
 				Info.plist,
 			);
 			target = 9BA6DAFB2F8F3C8E009AA3BC /* Rung */;
+		};
+		9B49CDAA2F9BD0CE001B86CD /* Exceptions for "ScreenTimeMonitor" folder in "ScreenTimeMonitor" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 9B49CD9B2F9BD0CC001B86CD /* ScreenTimeMonitor */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -114,6 +133,14 @@
 			path = RungUITests;
 			sourceTree = "<group>";
 		};
+		9B49CDA02F9BD0CE001B86CD /* ScreenTimeMonitor */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				9B49CDAA2F9BD0CE001B86CD /* Exceptions for "ScreenTimeMonitor" folder in "ScreenTimeMonitor" target */,
+			);
+			path = ScreenTimeMonitor;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -148,6 +175,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9B49CD992F9BD0CC001B86CD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9B49CD9F2F9BD0CD001B86CD /* DeviceActivity.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -164,6 +199,7 @@
 			children = (
 				8331E60E918128335B6FB36B /* OS X */,
 				BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */,
+				9B49CD9E2F9BD0CD001B86CD /* DeviceActivity.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -179,6 +215,7 @@
 				9BA6DAFD2F8F3C8E009AA3BC /* Products */,
 				721684DBC3B6D1921098EDDD /* RungShared */,
 				1EE480870898A6B223A22E79 /* RungWidgets */,
+				9B49CDA02F9BD0CE001B86CD /* ScreenTimeMonitor */,
 			);
 			sourceTree = "<group>";
 		};
@@ -189,6 +226,7 @@
 				9BA6DB0B2F8F3C90009AA3BC /* RungTests.xctest */,
 				9BA6DB152F8F3C90009AA3BC /* RungUITests.xctest */,
 				C1DA33907F824AA520B8E3E6 /* RungWidgets.appex */,
+				9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -209,6 +247,7 @@
 			);
 			dependencies = (
 				597966E2F1E90C04BB45797F /* PBXTargetDependency */,
+				9B49CDA62F9BD0CE001B86CD /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				721684DBC3B6D1921098EDDD /* RungShared */,
@@ -283,6 +322,26 @@
 			productReference = C1DA33907F824AA520B8E3E6 /* RungWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		9B49CD9B2F9BD0CC001B86CD /* ScreenTimeMonitor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9B49CDAB2F9BD0CE001B86CD /* Build configuration list for PBXNativeTarget "ScreenTimeMonitor" */;
+			buildPhases = (
+				9B49CD982F9BD0CC001B86CD /* Sources */,
+				9B49CD992F9BD0CC001B86CD /* Frameworks */,
+				9B49CD9A2F9BD0CC001B86CD /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				9B49CDA02F9BD0CE001B86CD /* ScreenTimeMonitor */,
+			);
+			name = ScreenTimeMonitor;
+			productName = ScreenTimeMonitor;
+			productReference = 9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -309,6 +368,11 @@
 						DevelopmentTeam = YLN8JUVVX3;
 						ProvisioningStyle = Automatic;
 					};
+					9B49CD9B2F9BD0CC001B86CD = {
+						CreatedOnToolsVersion = 26.4;
+						DevelopmentTeam = YLN8JUVVX3;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = 9BA6DAF72F8F3C8E009AA3BC /* Build configuration list for PBXProject "Rung" */;
@@ -329,6 +393,7 @@
 				9BA6DB0A2F8F3C90009AA3BC /* RungTests */,
 				9BA6DB142F8F3C90009AA3BC /* RungUITests */,
 				F154B69396161217305A3106 /* RungWidgets */,
+				9B49CD9B2F9BD0CC001B86CD /* ScreenTimeMonitor */,
 			);
 		};
 /* End PBXProject section */
@@ -356,6 +421,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		E7D84180363837E39D034786 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9B49CD9A2F9BD0CC001B86CD /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -393,6 +465,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9B49CD982F9BD0CC001B86CD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -414,6 +493,14 @@
 			isa = PBXTargetDependency;
 			target = 9BA6DAFB2F8F3C8E009AA3BC /* Rung */;
 			targetProxy = 9BA6DB162F8F3C90009AA3BC /* PBXContainerItemProxy */;
+		};
+		9B49CDA62F9BD0CE001B86CD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilters = (
+				ios,
+			);
+			target = 9B49CD9B2F9BD0CC001B86CD /* ScreenTimeMonitor */;
+			targetProxy = 9B49CDA52F9BD0CE001B86CD /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -812,6 +899,64 @@
 			};
 			name = Release;
 		};
+		9B49CDA82F9BD0CE001B86CD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ScreenTimeMonitor/ScreenTimeMonitor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YLN8JUVVX3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ScreenTimeMonitor/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ScreenTimeMonitor;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "jashanveer.Rung.ScreenTimeMonitor";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		9B49CDA92F9BD0CE001B86CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ScreenTimeMonitor/ScreenTimeMonitor.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YLN8JUVVX3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ScreenTimeMonitor/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = ScreenTimeMonitor;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "jashanveer.Rung.ScreenTimeMonitor";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -856,6 +1001,15 @@
 			buildConfigurations = (
 				9BA6DB262F8F3C90009AA3BC /* Debug */,
 				9BA6DB272F8F3C90009AA3BC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9B49CDAB2F9BD0CE001B86CD /* Build configuration list for PBXNativeTarget "ScreenTimeMonitor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9B49CDA82F9BD0CE001B86CD /* Debug */,
+				9B49CDA92F9BD0CE001B86CD /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
