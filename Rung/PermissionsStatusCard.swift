@@ -214,11 +214,10 @@ final class PermissionsState: ObservableObject {
     // MARK: - Calendar
 
     private func isCalendarGranted() -> Bool {
-        let status = EKEventStore.authorizationStatus(for: .event)
-        if #available(iOS 17.0, macOS 14.0, *) {
-            return status == .fullAccess
-        }
-        return status.rawValue == EKAuthorizationStatus.authorized.rawValue
+        // Deployment targets are iOS 18 / macOS 15, both well above the
+        // iOS 17 / macOS 14 threshold where `.authorized` was renamed to
+        // `.fullAccess`. No legacy fallback needed.
+        return EKEventStore.authorizationStatus(for: .event) == .fullAccess
     }
 
     private func requestOrOpenCalendar() async {

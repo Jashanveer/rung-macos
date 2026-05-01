@@ -83,18 +83,13 @@ final class CalendarService: ObservableObject {
         await MainActor.run { self.todaysEvents = snapshot }
     }
 
-    /// Authorization shorthand. `.fullAccess` (iOS 17+) and the legacy
-    /// `.authorized` both grant read+write — read alone (`.writeOnly`) is
-    /// not enough for our queries, so we explicitly exclude it.
+    /// Authorization shorthand. `.fullAccess` is the only "yes" we accept
+    /// — `.writeOnly` doesn't let us read events, which is what our
+    /// queries need. Deployment targets are iOS 18 / macOS 15, both well
+    /// above the iOS 17 / macOS 14 threshold where `.authorized` was
+    /// renamed to `.fullAccess`, so no legacy fallback is needed.
     var isAuthorized: Bool {
-        if #available(iOS 17.0, macOS 14.0, *) {
-            return authorizationStatus == .fullAccess
-        }
-        // On older OSes the only "yes" is the deprecated .authorized case.
-        // Use rawValue so the check compiles on iOS 17+/macOS 14+ without
-        // emitting a deprecation warning (the symbolic case is removed in
-        // future SDK passes; rawValue is stable).
-        return authorizationStatus.rawValue == EKAuthorizationStatus.authorized.rawValue
+        return authorizationStatus == .fullAccess
     }
 
     /// Convenience flag for the "you have meetings today, freeze your
