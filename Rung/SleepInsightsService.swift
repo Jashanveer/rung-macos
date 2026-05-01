@@ -85,23 +85,16 @@ final class SleepInsightsService: ObservableObject {
 
     /// Pull the last `nights` nights of sleep samples and recompute the
     /// snapshot. Behaviour by platform:
-    /// - **iOS**: queries HealthKit, computes locally, uploads to backend
-    ///   so other devices can read it.
-    /// - **macOS**: HealthKit isn't available on native Mac apps, so the
-    ///   service skips straight to fetching the iPhone-uploaded snapshot
-    ///   from the backend.
+    /// - **iOS / iPadOS / macOS 13+**: queries HealthKit (HKHealthStore is
+    ///   available on Mac since macOS 13), computes locally, uploads to
+    ///   backend so other devices can read it.
+    /// - Falls back to `refreshFromBackend()` when HealthKit isn't
+    ///   available (e.g., HKHealthStore.isHealthDataAvailable() is false
+    ///   or sleep authorization was denied).
     func refresh(nights: Int = 14) async {
-        #if os(macOS)
-        // Native macOS apps can't read HealthKit. Skip the local query
-        // entirely and lean on whatever the iPhone uploaded.
-        await refreshFromBackend()
-        return
-        #else
         await refreshFromHealthKit(nights: nights)
-        #endif
     }
 
-    #if !os(macOS)
     /// HealthKit-driven refresh path. iOS-only because native macOS apps
     /// can't read HK. After computing locally, pushes the snapshot to
     /// the backend so the Mac client can read what we just computed.
@@ -215,11 +208,11 @@ final class SleepInsightsService: ObservableObject {
             await backend.uploadSleepSnapshot(payload)
         }
     }
-    #endif
 
-    /// Backend-driven refresh. macOS calls this directly (no HK at all);
-    /// iOS calls it as a fallback when HK isn't available. No-op when
-    /// the user isn't signed in or the backend has no row yet.
+    /// Backend-driven refresh. Used as a fallback by `refreshFromHealthKit`
+    /// when HK isn't available, and reachable directly so other devices
+    /// can pull a snapshot the iPhone uploaded. No-op when the user isn't
+    /// signed in or the backend has no row yet.
     private func refreshFromBackend() async {
         isRefreshing = true
         defer { isRefreshing = false }
