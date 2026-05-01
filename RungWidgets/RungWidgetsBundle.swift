@@ -14,5 +14,8 @@ struct RungWidgetsBundle: WidgetBundle {
         DashboardWidget()
         LeaderboardWidget()
         CommandCenterWidget()
+        #if os(iOS)
+        FocusLiveActivityWidget()
+        #endif
     }
 }

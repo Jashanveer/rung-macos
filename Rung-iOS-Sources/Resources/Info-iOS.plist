@@ -2,12 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>Rung</string>
 	<key>BackendBaseURL</key>
 	<string>https://rung-backend-dev.fly.dev</string>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.productivity</string>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Rung uses Apple Health data to verify your habits and award accurate leaderboard points.</string>
 	<key>NSHealthUpdateUsageDescription</key>
@@ -22,10 +22,14 @@
 	<string>Rung reads today's events so it can suggest a streak freeze on busy days and surface tasks tied to your meetings.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIRequiresFullScreen</key>
 	<true/>
-	<key>CADisableMinimumFrameDurationOnPhone</key>
-	<true/>
+	<!-- Permits HTTP loads to localhost / *.local / private LAN IPs so the
+	     `-BackendBaseURL http://localhost:8080` launch-arg toggle works.
+	     This is the Apple-approved key for local-network development —
+	     it does NOT enable arbitrary HTTP and is App Review-clean. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
