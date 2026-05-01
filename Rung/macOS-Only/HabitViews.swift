@@ -966,9 +966,11 @@ private struct DueDateCalendarGrid: View {
         let isToday = calendar.isDateInToday(date)
 
         return Button {
-            withAnimation(.smooth(duration: 0.12)) {
-                draft = calendar.startOfDay(for: date)
-            }
+            // No withAnimation — clicking a day can shift `visibleMonth`
+            // through `.onChange(of: draft)`, which changes the grid's
+            // row count and triggers the same NSPopover._setContentView
+            // animator crash that "Other" used to hit. Plain state set.
+            draft = calendar.startOfDay(for: date)
         } label: {
             Text("\(calendar.component(.day, from: date))")
                 .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
@@ -995,9 +997,10 @@ private struct DueDateCalendarGrid: View {
     }
 
     private func moveMonth(by amount: Int) {
-        withAnimation(.smooth(duration: 0.14)) {
-            visibleMonth = calendar.date(byAdding: .month, value: amount, to: visibleMonth) ?? visibleMonth
-        }
+        // No withAnimation — different months have different week counts
+        // (5 vs 6 rows), and animating that height change races AppKit's
+        // popover-window animator into a null-pointer dereference.
+        visibleMonth = calendar.date(byAdding: .month, value: amount, to: visibleMonth) ?? visibleMonth
     }
 
     private static func startOfMonth(for date: Date) -> Date {
