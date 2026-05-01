@@ -720,7 +720,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=iphone*]" = "Rung-iOS-Sources/Resources/Rung-iOS.Debug.entitlements";
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = Rung/Rung.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = YLN8JUVVX3;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -773,7 +773,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=iphone*]" = "Rung-iOS-Sources/Resources/Rung-iOS.Release.entitlements";
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = Rung/Rung.Release.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = YLN8JUVVX3;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
