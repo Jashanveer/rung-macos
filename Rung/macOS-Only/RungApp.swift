@@ -19,6 +19,7 @@ struct RungApp: App {
         // the main actor in SwiftUI; assumeIsolated documents that.
         MainActor.assumeIsolated {
             AutoVerificationCoordinator.shared.bootstrap(container: Self.sharedModelContainer)
+            ForegroundTracker.shared.startListening()
         }
     }
 
