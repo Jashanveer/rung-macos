@@ -162,8 +162,7 @@ struct ContentViewScaffold: View {
                     .frame(maxWidth: 980)
                     .padding(.horizontal, 24)
                     .padding(.bottom, 22)
-                    .matchedGeometryEffect(id: "panel-calendar", in: panelMorph)
-                    .transition(.opacity)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 .zIndex(4)
             }
@@ -224,8 +223,7 @@ struct ContentViewScaffold: View {
                     }
                 }
                 .padding(.bottom, 8)
-                .matchedGeometryEffect(id: "panel-calendar", in: panelMorph)
-                .transition(.opacity)
+                .transition(.scale(scale: 0.94, anchor: .bottom).combined(with: .opacity))
             }
         }
         .overlay {
