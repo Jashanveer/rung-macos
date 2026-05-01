@@ -639,14 +639,23 @@ private struct DueDatePopover: View {
         self._draft = State(initialValue: seed)
     }
 
-    private var presets: [DueDatePreset] { DueDatePreset.defaults }
+    // Computed once per init so body re-renders don't reallocate four
+    // structs + four DateFormatters per frame. The popover animation
+    // that crashed (NSPopover._setContentView:size:canAnimate:) was
+    // sensitive to render-time allocations; cutting them out makes
+    // the resize path far less hostile to the AppKit animator.
+    private let cachedPresets: [DueDatePreset] = DueDatePreset.defaults
+    private var presets: [DueDatePreset] { cachedPresets }
     private var activePreset: DueDatePreset? {
-        presets.first { Calendar.current.isDate($0.date, inSameDayAs: draft) }
+        cachedPresets.first { Calendar.current.isDate($0.date, inSameDayAs: draft) }
     }
+    private static let fullDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .full
+        return f
+    }()
     private var selectedDateText: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        return formatter.string(from: draft)
+        Self.fullDateFormatter.string(from: draft)
     }
     private var isOtherSelected: Bool { activePreset == nil }
 
@@ -676,9 +685,16 @@ private struct DueDatePopover: View {
             .padding(.horizontal, 12)
 
             if showsCustomCalendar {
+                // No `.transition` here. With the calendar grid as a
+                // conditional child, AppKit's NSPopover tries to
+                // animate its window resize on `_setContentView`, and
+                // the transition/withAnimation pair raced into a
+                // null-pointer dereference inside
+                // PopoverHostingView.updateAnimatedWindowSize. Static
+                // appear/disappear is safe; the popover just snaps to
+                // the new content size.
                 DueDateCalendarGrid(draft: $draft)
                     .padding(.horizontal, 12)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             HStack {
@@ -743,10 +759,11 @@ private struct DueDatePopover: View {
     private func presetButton(_ preset: DueDatePreset) -> some View {
         let isActive = activePreset?.id == preset.id
         return Button {
-            withAnimation(.smooth(duration: 0.15)) {
-                draft = preset.date
-                showsCustomCalendar = false
-            }
+            // No `withAnimation` around showsCustomCalendar — toggling
+            // the conditional calendar grid through the AppKit popover
+            // resize animation crashes (see DueDatePopover above).
+            draft = preset.date
+            showsCustomCalendar = false
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: preset.icon)
@@ -783,9 +800,7 @@ private struct DueDatePopover: View {
 
     private var otherButton: some View {
         Button {
-            withAnimation(.smooth(duration: 0.18)) {
-                showsCustomCalendar = true
-            }
+            showsCustomCalendar = true
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: "calendar")
@@ -837,14 +852,20 @@ private struct DueDateCalendarGrid: View {
 
     private var calendar: Calendar { Calendar.current }
 
+    private static let monthTitleFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
+        return f
+    }()
     private var monthTitle: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
-        return formatter.string(from: visibleMonth)
+        Self.monthTitleFormatter.string(from: visibleMonth)
     }
 
+    private static let cachedWeekdaySymbols: [String] = {
+        DateFormatter().veryShortStandaloneWeekdaySymbols ?? ["S", "M", "T", "W", "T", "F", "S"]
+    }()
     private var weekdaySymbols: [String] {
-        let symbols = DateFormatter().veryShortStandaloneWeekdaySymbols ?? ["S", "M", "T", "W", "T", "F", "S"]
+        let symbols = Self.cachedWeekdaySymbols
         let firstIndex = max(0, calendar.firstWeekday - 1)
         return Array(symbols[firstIndex..<symbols.count]) + Array(symbols[0..<firstIndex])
     }

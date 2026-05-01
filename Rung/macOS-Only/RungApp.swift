@@ -20,6 +20,13 @@ struct RungApp: App {
         MainActor.assumeIsolated {
             AutoVerificationCoordinator.shared.bootstrap(container: Self.sharedModelContainer)
             ForegroundTracker.shared.startListening()
+            #if DEBUG
+            // Seed the MeetingsPill's demo events at launch instead of
+            // only when CenterPanel appears, so the pill shows up
+            // regardless of where the user lands first (auth, onboarding,
+            // or dashboard).
+            CalendarService.shared.loadDemoEventsIfEmpty()
+            #endif
         }
     }
 
