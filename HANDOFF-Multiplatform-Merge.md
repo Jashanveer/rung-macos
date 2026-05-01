@@ -36,7 +36,7 @@ The correct fix is to use **per-file platform filters** on synchronized folders 
 
 ### Step 1: Open in Xcode
 ```sh
-open /Users/jashanveer/Documents/Rung-MacOS/Rung.xcodeproj
+open /Users/jashanveer/Documents/Rung/Rung.xcodeproj
 ```
 Make sure you're on branch `feat/multiplatform-merge`.
 
@@ -121,7 +121,7 @@ You'll likely see new compile errors — UIKit imports needing iOS-specific fram
 - Verify SwiftData container works on both — same store URL strategy
 - Test on actual iPhone if possible (Family Controls needs a real device)
 
-## Critical: do NOT delete the `Rung-iOS/` and `Rung-MacOS/` source projects
+## Critical: do NOT delete the `Rung-iOS/` and `Rung/` source projects
 
 They're your backups until the merged version is shipping in TestFlight. Don't delete them.
 

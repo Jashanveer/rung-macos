@@ -137,7 +137,7 @@ Keep the output focused on iPhone. iPad can come later.
 
 ---
 
-## 9. Reference files in the macOS repo (`~/Documents/Rung-MacOS/Rung/`)
+## 9. Reference files in the macOS repo (`~/Documents/Rung/Rung/`)
 
 - Root scaffold: `ContentView.swift`, `ContentViewScaffold.swift`
 - Center + habits: `CenterPanel.swift`, `HabitViews.swift`, `HabitCard` (inside `HabitViews.swift`)
