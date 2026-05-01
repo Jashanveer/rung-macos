@@ -160,6 +160,14 @@ final class FocusController: ObservableObject {
             endsAt: now.addingTimeInterval(length),
             isPaused: false
         )
+
+        // Play bundled focus music for the focus phase only — break
+        // phases stay silent so the user can actually rest.
+        if phase == .focus {
+            startBundledAudio()
+        } else {
+            FocusAudioPlayer.shared.stop()
+        }
     }
 
     func pause() {
@@ -168,6 +176,7 @@ final class FocusController: ObservableObject {
         session.isPaused = true
         self.session = session
         timer?.cancel()
+        FocusAudioPlayer.shared.pause()
 
         FocusLiveActivityManager.update(
             phaseRaw: session.phase.rawValue,
@@ -184,6 +193,7 @@ final class FocusController: ObservableObject {
         session.pausedRemaining = nil
         self.session = session
         startTimer()
+        FocusAudioPlayer.shared.resume()
 
         FocusLiveActivityManager.update(
             phaseRaw: session.phase.rawValue,
@@ -200,7 +210,21 @@ final class FocusController: ObservableObject {
         session = nil
         remaining = 0
         isImmersivePresented = false
+        FocusAudioPlayer.shared.stop()
         Task { await FocusLiveActivityManager.endAll() }
+    }
+
+    /// Reads the user's `@AppStorage` audio settings and asks the
+    /// shared `FocusAudioPlayer` to start a track. We read the keys
+    /// directly from `UserDefaults` (rather than declaring an
+    /// `@AppStorage` property on the controller) because
+    /// `FocusController` is `ObservableObject` — adding settings as
+    /// stored properties would needlessly republish on every tweak.
+    private func startBundledAudio() {
+        let defaults = UserDefaults.standard
+        let modeRaw = defaults.string(forKey: "Settings.focusMusicMode") ?? FocusAudioMode.shuffle.rawValue
+        let volume = Float(defaults.object(forKey: "Settings.focusMusicVolume") as? Double ?? 0.6)
+        FocusAudioPlayer.shared.playRandom(for: FocusAudioMode(rawValue: modeRaw), volume: volume)
     }
 
     /// Called when the timer hits zero. Auto-advances into the next phase
@@ -290,6 +314,9 @@ struct FocusModeView: View {
 
     @State private var animateBlobs = false
     @State private var animateRing = false
+    /// Drives the music settings sheet anchored to the gear button on
+    /// the top-right of the immersive HUD.
+    @State private var showAudioSettings = false
 
     var body: some View {
         if let session = controller.session {
@@ -382,7 +409,7 @@ struct FocusModeView: View {
 
     @ViewBuilder
     private func topBar(session: FocusSession) -> some View {
-        HStack {
+        HStack(spacing: 10) {
             Label(session.phase.label, systemImage: session.phase.icon)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
@@ -399,6 +426,23 @@ struct FocusModeView: View {
 
             Spacer()
 
+            // Music / settings gear — opens a sheet with the on/off
+            // toggle, mode picker (Shuffle / Lo-fi / Nature / specific
+            // track), and volume slider. The user explicitly asked for
+            // the button to live on the top-right of the focus HUD.
+            Button {
+                showAudioSettings = true
+            } label: {
+                Image(systemName: "music.note")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(0.12), in: Circle())
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Music settings")
+
             Button {
                 controller.cancel()
             } label: {
@@ -413,6 +457,9 @@ struct FocusModeView: View {
             .accessibilityLabel("Exit focus mode")
         }
         .padding(.horizontal, 24)
+        .sheet(isPresented: $showAudioSettings) {
+            FocusAudioSettingsSheet()
+        }
     }
 
     @ViewBuilder
@@ -578,5 +625,201 @@ struct FocusStartButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Start focus session for \(taskTitle)")
+    }
+}
+
+// MARK: - Audio settings sheet
+
+/// Compact settings panel surfaced via the music gear on the focus HUD.
+/// Lets the user toggle music, pick a mode (Shuffle / Lo-fi / Nature /
+/// specific track) and adjust volume in real time.
+///
+/// The mode change does not interrupt the currently-playing track —
+/// per the user's spec, the music doesn't change mid-session. The
+/// new mode applies the next time a focus phase begins.
+struct FocusAudioSettingsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    @AppStorage("Settings.focusMusicMode") private var modeRaw: String = FocusAudioMode.shuffle.rawValue
+    @AppStorage("Settings.focusMusicVolume") private var volume: Double = 0.6
+
+    @ObservedObject private var player = FocusAudioPlayer.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            header
+
+            Toggle(isOn: enabledBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Play music during focus")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Starts when a focus phase begins, stops on breaks and when you cancel.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            volumeSection
+
+            modeSection
+
+            if let nowPlaying = player.currentTrack {
+                HStack(spacing: 8) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.indigo)
+                    Text("Now playing: \(nowPlaying.displayName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+        .frame(minWidth: 320, idealWidth: 380, minHeight: 460, idealHeight: 540)
+        .onChange(of: volume) { _, newValue in
+            player.setVolume(Float(newValue))
+        }
+    }
+
+    // MARK: - Sections
+
+    private var header: some View {
+        HStack {
+            Image(systemName: "music.note")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(Color.indigo, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Focus music")
+                    .font(.headline)
+                Text("Bundled royalty-free tracks")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(.thinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+        }
+    }
+
+    @ViewBuilder
+    private var volumeSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Volume")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                Slider(value: $volume, in: 0...1)
+                Image(systemName: "speaker.wave.3.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var modeSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Mode")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    optionRow(
+                        title: "Shuffle (any track)",
+                        systemImage: "shuffle",
+                        target: .shuffle
+                    )
+                    ForEach(FocusAudioTrack.Category.allCases) { cat in
+                        optionRow(
+                            title: "\(cat.rawValue) — random",
+                            systemImage: cat.systemImage,
+                            target: .category(cat)
+                        )
+                    }
+                    Divider().padding(.vertical, 4)
+                    ForEach(FocusAudioLibrary.tracks) { track in
+                        optionRow(
+                            title: track.displayName,
+                            systemImage: track.category.systemImage,
+                            target: .track(track.id)
+                        )
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: 240)
+
+            Text("Mode changes apply on the next focus session — the current track keeps playing.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 4)
+        }
+    }
+
+    private func optionRow(title: String, systemImage: String, target: FocusAudioMode) -> some View {
+        let isSelected = modeRaw == target.rawValue
+        return Button {
+            modeRaw = target.rawValue
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 13))
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.indigo)
+                }
+            }
+            .foregroundStyle(isSelected ? Color.indigo : .primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected
+                          ? Color.indigo.opacity(colorScheme == .dark ? 0.18 : 0.10)
+                          : Color.primary.opacity(colorScheme == .dark ? 0.04 : 0.02))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Toggle wrapper that flips between `.off` and `.shuffle` (default
+    /// "on" mode) so the user can disable music without losing their
+    /// previously-selected mode if they only ever used Shuffle.
+    private var enabledBinding: Binding<Bool> {
+        Binding(
+            get: { FocusAudioMode(rawValue: modeRaw).isEnabled },
+            set: { newValue in
+                if newValue {
+                    if !FocusAudioMode(rawValue: modeRaw).isEnabled {
+                        modeRaw = FocusAudioMode.shuffle.rawValue
+                    }
+                } else {
+                    modeRaw = FocusAudioMode.off.rawValue
+                }
+            }
+        )
     }
 }

@@ -184,4 +184,11 @@ extension Notification.Name {
     /// wrote a habit — ContentView reacts by triggering syncWithBackend
     /// so the change lands within seconds instead of on the next timer.
     static let habitsChangedSSE = Notification.Name("habitsChangedSSE")
+    /// Fired when the backend hard-deletes the current user's account
+    /// (locally via the deleteAccount API call, or remotely via the
+    /// `session.revoked` SSE event broadcast to all of the user's
+    /// connected devices). ContentView observes this to wipe local
+    /// SwiftData habits + completion records so a subsequent sign-in
+    /// can never resurrect ghost data from the previous account.
+    static let rungAccountDeleted = Notification.Name("rungAccountDeleted")
 }

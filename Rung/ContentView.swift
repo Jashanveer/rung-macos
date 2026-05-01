@@ -188,6 +188,32 @@ struct ContentView: View {
             print("[ContentView] staleResourceTick fired — running reconcile")
             syncWithBackend()
         }
+        // Account hard-delete. Fires from two places:
+        // - Local: the user tapped "Delete account" on this device and
+        //   the backend confirmed the row + all data is gone.
+        // - Remote: the backend's `session.revoked` SSE event arrived
+        //   because the user deleted their account on another device.
+        // In either case we drop every local Habit so a subsequent
+        // sign-in can never see resurrected data from the prior account.
+        .onReceive(NotificationCenter.default.publisher(for: .rungAccountDeleted)) { _ in
+            wipeLocalAccountData()
+        }
+    }
+
+    /// Hard-deletes every Habit/Task row for this user from SwiftData.
+    /// Called only on full account deletion — sign-out (where the user
+    /// might come back to the same account) leaves local data alone so
+    /// the dashboard isn't blank during the sign-in flow.
+    private func wipeLocalAccountData() {
+        for habit in habits {
+            modelContext.delete(habit)
+        }
+        do {
+            try modelContext.save()
+        } catch {
+            print("[ContentView] wipeLocalAccountData save error: \(error)")
+        }
+        WidgetSnapshotWriter.shared.clearBackendData()
     }
 
     // MARK: - Add habit
