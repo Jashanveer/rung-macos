@@ -605,11 +605,14 @@ private struct DueDateControl: View {
                 isPresented: $isPresented
             )
             #if os(iOS)
-            // Present as a sheet on iPhone with detents so the calendar is
-            // always fully visible and cooperates with the keyboard. The
-            // previous `.popover` adaptation crammed everything into a tiny
-            // popup that clipped the "Other" calendar and the Done button.
-            .presentationDetents([.medium, .large])
+            // Pin to ONE detent (.large). Two detents (.medium + .large)
+            // caused a layout cycle: tapping "Other" inside the popover
+            // toggles the inline calendar, which changes intrinsic
+            // content height; SwiftUI then tried to re-pick a detent on
+            // every animation frame, which combined with the body's
+            // `.animation(value: showsCustomCalendar)` modifier drove
+            // the app into an unresponsive layout loop.
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .presentationCompactAdaptation(.sheet)
             #endif
@@ -669,18 +672,29 @@ private struct DueDatePopover: View {
         self._draft = State(initialValue: seed)
     }
 
-    private var presets: [DueDatePreset] { DueDatePreset.defaults }
+    // Computed once per init via the `cachedPresets` constant so the body
+    // doesn't allocate four new structs + four DateFormatters on every
+    // render pass.
+    private let cachedPresets: [DueDatePreset] = DueDatePreset.defaults
+    private var presets: [DueDatePreset] { cachedPresets }
     private var activePreset: DueDatePreset? {
-        presets.first { Calendar.current.isDate($0.date, inSameDayAs: draft) }
+        cachedPresets.first { Calendar.current.isDate($0.date, inSameDayAs: draft) }
     }
+    private static let fullDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .full
+        return f
+    }()
     private var selectedDateText: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        return formatter.string(from: draft)
+        Self.fullDateFormatter.string(from: draft)
     }
     private var isOtherSelected: Bool { activePreset == nil }
 
     var body: some View {
+        // No `.animation(value: showsCustomCalendar)` here — the toggle
+        // call sites already wrap state changes in `withAnimation`.
+        // Stacking an implicit animation on top combined with the sheet's
+        // detent re-measuring caused a hang on iPhone.
         Group {
             if isCompact {
                 // Sheet layout on iPhone: the sheet supplies the rounded
@@ -704,7 +718,6 @@ private struct DueDatePopover: View {
                     )
             }
         }
-        .animation(.smooth(duration: 0.18), value: showsCustomCalendar)
     }
 
     @ViewBuilder
@@ -887,14 +900,20 @@ private struct DueDateCalendarGrid: View {
 
     private var calendar: Calendar { Calendar.current }
 
+    private static let monthTitleFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
+        return f
+    }()
     private var monthTitle: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
-        return formatter.string(from: visibleMonth)
+        Self.monthTitleFormatter.string(from: visibleMonth)
     }
 
+    private static let cachedWeekdaySymbols: [String] = {
+        DateFormatter().veryShortStandaloneWeekdaySymbols ?? ["S", "M", "T", "W", "T", "F", "S"]
+    }()
     private var weekdaySymbols: [String] {
-        let symbols = DateFormatter().veryShortStandaloneWeekdaySymbols ?? ["S", "M", "T", "W", "T", "F", "S"]
+        let symbols = Self.cachedWeekdaySymbols
         let firstIndex = max(0, calendar.firstWeekday - 1)
         return Array(symbols[firstIndex..<symbols.count]) + Array(symbols[0..<firstIndex])
     }
