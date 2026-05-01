@@ -39,6 +39,14 @@ final class SleepInsightsService: ObservableObject {
     /// the iPhone hasn't synced lately.
     @Published private(set) var snapshotUpdatedAt: Date?
 
+    /// Number of distinct sleep nights returned by the most recent HK
+    /// query, regardless of whether they cleared the 3-night minimum
+    /// needed to build a snapshot. `nil` = HealthKit unavailable, the
+    /// query failed, or refresh hasn't run yet. Empty-state UIs read
+    /// this to tell "no access / no tracked sleep" (nil or 0) apart
+    /// from "granted but not enough nights yet" (1-2).
+    @Published private(set) var lastSleepNightCount: Int?
+
     /// Backend store reference, lazily set by the app delegate / scene
     /// once the user is authenticated. Without it, refresh runs in
     /// local-only mode (HK on iOS, no-op on macOS).
@@ -102,6 +110,7 @@ final class SleepInsightsService: ObservableObject {
               let sleepType = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
             // HK isn't available on this device — try the backend
             // fallback so the user still sees something.
+            lastSleepNightCount = nil
             await refreshFromBackend()
             return
         }
@@ -119,10 +128,15 @@ final class SleepInsightsService: ObservableObject {
         do {
             samples = try await fetchSleepSamples(type: sleepType, predicate: predicate)
         } catch {
+            // Don't claim "0 nights" when the query itself failed — leave
+            // the count nil so the empty-state UI can tell auth/data
+            // problems apart from "we genuinely saw zero samples".
+            lastSleepNightCount = nil
             return
         }
 
         let nightlySamples = bucketByNight(samples: samples)
+        lastSleepNightCount = nightlySamples.count
         guard nightlySamples.count >= 3 else {
             // Not enough data — leave the prior snapshot in place so the
             // UI doesn't flap between "we have a suggestion" and "we don't".

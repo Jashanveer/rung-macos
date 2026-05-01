@@ -44,9 +44,17 @@ struct SettingsPanel: View {
 
                 PermissionsStatusCard()
 
+                #if !os(macOS)
+                // Profile editing on macOS lives in the dedicated
+                // first-launch flow only — the Social Circle panel
+                // skips it to keep the macOS surface focused on
+                // people / accountability rather than identity.
                 ProfileEditCard(backend: backend)
+                #endif
 
                 AccountActionsCard(backend: backend, showDeleteConfirm: $showDeleteConfirm)
+
+                EnergyViewSettingsCard()
 
                 VerificationHelpCard()
 
@@ -917,6 +925,42 @@ private struct TimeReminderOptionButton: View {
             isActive: isSelected || isHovered
         )
         .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Energy View Visibility
+
+/// Toggle that lets users without an Apple Watch (or anyone who doesn't
+/// track sleep) hide the Energy view entirely. Off → the Cal/Energy
+/// switcher disappears and the Calendar tab is calendar-only. The
+/// `Settings.showEnergyView` key is read by `CalendarSheet` via
+/// `@AppStorage` so this control doesn't need any wiring beyond writing
+/// the same key. Defaults to true so existing users see no change.
+struct EnergyViewSettingsCard: View {
+    @AppStorage("Settings.showEnergyView") private var showEnergyView = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PanelTitle(systemImage: "bolt.heart.fill", title: "Energy view")
+
+            Toggle(isOn: $showEnergyView) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Show Energy alongside Calendar")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Adds a Cal / Energy switcher to the Calendar tab. Turn off if you don't track sleep — the Calendar fills the screen instead.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(MinimalToggleStyle())
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cleanShotSurface(
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+            level: .control
+        )
     }
 }
 

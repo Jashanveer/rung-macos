@@ -179,6 +179,15 @@ struct ContentView: View {
             guard backend.isAuthenticated else { return }
             syncWithBackend()
         }
+        // Server returned 404 for a habit/task/check the local store
+        // thought existed (e.g. iPhone deleted it while macOS still had
+        // a stale copy). The backend already swallowed the error toast
+        // — we just need to reconcile so server state overrides local.
+        .onChange(of: backend.staleResourceTick) { _, _ in
+            guard backend.isAuthenticated else { return }
+            print("[ContentView] staleResourceTick fired — running reconcile")
+            syncWithBackend()
+        }
     }
 
     // MARK: - Add habit
@@ -436,8 +445,17 @@ struct ContentView: View {
                 habit.syncStatus = .synced
                 habit.updatedAt  = Date()
             } catch {
-                habit.syncStatus = .failed
-                // pendingCheckDayKey stays set so the next sync can retry
+                // 404 means the habit/task no longer exists on the server.
+                // Drop the pending op so we don't loop on it forever — the
+                // pull pass below will delete the orphan from SwiftData
+                // (server-wins). For everything else, leave the pending
+                // op so the next sync retries it.
+                if case HabitBackendError.notFound = error {
+                    habit.pendingCheckDayKey = nil
+                    habit.syncStatus = .synced
+                } else {
+                    habit.syncStatus = .failed
+                }
             }
         }
     }
@@ -616,9 +634,20 @@ struct ContentView: View {
                 }
                 await backend.refreshDashboard()
             } catch {
-                // Keep pendingCheckDayKey set so flushOutbox can retry the exact operation
-                habit.syncStatus = .failed
-                backend.errorMessage = error.localizedDescription
+                // 404 = server doesn't have this habit (deleted on
+                // another device). Drop the pending check op locally —
+                // the staleResourceTick observer already kicked off a
+                // reconcile that will delete this orphan from SwiftData.
+                if case HabitBackendError.notFound = error {
+                    habit.pendingCheckDayKey = nil
+                    habit.syncStatus = .synced
+                } else {
+                    // Keep pendingCheckDayKey set so flushOutbox can retry
+                    // the exact operation. The error message is already
+                    // populated by the backend store (network errors get
+                    // a soft offline status; other errors surface verbatim).
+                    habit.syncStatus = .failed
+                }
                 saveAndRefreshWidgets()
             }
             refreshTimeReminders()

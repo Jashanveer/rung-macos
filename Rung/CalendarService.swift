@@ -136,6 +136,51 @@ final class CalendarService: ObservableObject {
         !eventsRelated(to: taskTitle).isEmpty
     }
 
+    #if DEBUG
+    /// Hydrate `todaysEvents` with a representative "busy day" so the
+    /// dashboard's MeetingsPill can be previewed on dev builds where
+    /// the user hasn't granted Calendar access (or simply has nothing
+    /// scheduled today). No-op once any real events have been loaded —
+    /// production calendar data is never overwritten.
+    func loadDemoEventsIfEmpty() {
+        guard todaysEvents.isEmpty else { return }
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: Date())
+        // Eight back-to-back meetings between 9am and 6pm so the pill
+        // reads "8 meetings today" and the >180-min freeze threshold
+        // would naturally trigger on a real busy day.
+        let blocks: [(hour: Int, minute: Int, lengthMinutes: Int, title: String)] = [
+            (9, 0, 30, "Standup"),
+            (9, 45, 60, "Design review"),
+            (11, 0, 45, "1:1 with Manager"),
+            (12, 30, 30, "Lunch & learn"),
+            (13, 30, 60, "Customer call"),
+            (15, 0, 30, "Sprint planning"),
+            (16, 0, 45, "Code review"),
+            (17, 0, 30, "Roadmap sync"),
+        ]
+        let events: [CalendarEvent] = blocks.compactMap { block in
+            guard let start = calendar.date(
+                bySettingHour: block.hour,
+                minute: block.minute,
+                second: 0,
+                of: startOfDay
+            ) else { return nil }
+            let end = start.addingTimeInterval(TimeInterval(block.lengthMinutes * 60))
+            return CalendarEvent(
+                id: "demo-\(block.hour)-\(block.minute)",
+                title: block.title,
+                startDate: start,
+                endDate: end,
+                isAllDay: false,
+                calendarTitle: "Demo",
+                calendarColorHex: "#7C8DFF"
+            )
+        }
+        todaysEvents = events
+    }
+    #endif
+
     // MARK: - Private
 
     private func observeStoreChanges() {
@@ -197,6 +242,24 @@ struct CalendarEvent: Identifiable, Hashable {
     let calendarColorHex: String?
 
     var duration: TimeInterval { endDate.timeIntervalSince(startDate) }
+
+    init(
+        id: String,
+        title: String,
+        startDate: Date,
+        endDate: Date,
+        isAllDay: Bool,
+        calendarTitle: String,
+        calendarColorHex: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.startDate = startDate
+        self.endDate = endDate
+        self.isAllDay = isAllDay
+        self.calendarTitle = calendarTitle
+        self.calendarColorHex = calendarColorHex
+    }
 
     init(from event: EKEvent) {
         self.id = event.eventIdentifier ?? UUID().uuidString

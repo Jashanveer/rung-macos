@@ -16,6 +16,26 @@ struct EnergyView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var refreshing = false
+    /// True after the user tapped "Connect Apple Health" once. iOS won't
+    /// re-prompt for HK access if the user already answered, so the
+    /// second tap routes straight to the Health app where they can flip
+    /// the toggle by hand. We also surface an alert with the same option
+    /// when the first tap returned without producing any data.
+    /// Hydrated from `UserDefaults` on appear — same breadcrumb that
+    /// `PermissionsStatusCard` writes — so navigating away and back
+    /// doesn't reset the button to "Connect" after a real grant.
+    @State private var didRequestHealthKit = false
+    @State private var isRequestingHealthKit = false
+    @State private var showHealthAccessAlert = false
+    /// `true` = "we can't read sleep data" (offer Open-Health).
+    /// `false` = "access is fine, just not enough nights tracked yet."
+    @State private var healthAlertIsAccessIssue = true
+
+    #if os(iOS)
+    /// Same key used by `PermissionsStatusCard` so both surfaces share
+    /// one source of truth for "user has been prompted at least once".
+    private static let healthKitAskedKey = "PermissionsStatusCard.healthKitAsked.v1"
+    #endif
 
     var body: some View {
         ScrollView {
@@ -102,30 +122,44 @@ struct EnergyView: View {
 
     @ViewBuilder
     private func recommendationsSection(forecast: EnergyForecast) -> some View {
-        let now = Date()
-        let endOfDay = Calendar.current.date(byAdding: .hour, value: 12, to: now) ?? now
+        let windows = EnergyCurveChart.windows(for: forecast)
 
         VStack(spacing: 10) {
-            if let peak = forecast.nextPeak(after: now, until: endOfDay) {
-                let mins = Int(peak.timeIntervalSince(now) / 60)
-                let timing = mins <= 1 ? "right now" : (mins < 60 ? "in \(mins) min" : timeString(peak))
+            ForEach(windows) { window in
                 InsightRow(
-                    systemImage: "bolt.fill",
-                    tint: .green,
-                    primary: "Peak \(timing)",
-                    secondary: "Best window for deep work, hard workouts, or any habit you've been putting off."
+                    systemImage: icon(for: window.kind),
+                    tint: window.tint,
+                    primary: "\(headline(for: window.kind)) · \(timeString(window.time))",
+                    secondary: copy(for: window.kind)
                 )
             }
-            if let dip = forecast.nextDip(after: now, until: endOfDay) {
-                let mins = Int(dip.timeIntervalSince(now) / 60)
-                let timing = mins <= 1 ? "right now" : (mins < 60 ? "in \(mins) min" : timeString(dip))
-                InsightRow(
-                    systemImage: "battery.25",
-                    tint: .orange,
-                    primary: "Dip \(timing)",
-                    secondary: "Schedule something low-stakes — a walk, a stretch, a reading break."
-                )
-            }
+        }
+    }
+
+    private func icon(for kind: EnergyWindow.Kind) -> String {
+        switch kind {
+        case .focus:    return "brain.head.profile"
+        case .move:     return "figure.run"
+        case .windDown: return "moon.stars.fill"
+        }
+    }
+
+    private func headline(for kind: EnergyWindow.Kind) -> String {
+        switch kind {
+        case .focus:    return "Focus window"
+        case .move:     return "Movement window"
+        case .windDown: return "Wind-down"
+        }
+    }
+
+    private func copy(for kind: EnergyWindow.Kind) -> String {
+        switch kind {
+        case .focus:
+            return "Office work, deep focus, learning. Cortisol is at its highest, your prefrontal cortex is sharp — protect this time for analytical work."
+        case .move:
+            return "Gym, walks, errands, social calls. Body temperature is climbing for peak physical performance, while cognitive demand naturally dips — pair the two."
+        case .windDown:
+            return "Reading, journaling, planning tomorrow. Skip intense work and bright screens so melatonin can rise on schedule."
         }
     }
 
@@ -185,15 +219,16 @@ struct EnergyView: View {
             // Only iOS can read HealthKit on a native app. macOS users
             // get a stay-where-you-are message above instead of a button
             // that wouldn't actually do anything.
-            Button {
-                Task {
-                    try? await VerificationService.shared.requestAuthorization()
-                    await service.refresh()
-                }
-            } label: {
+            Button(action: handleHealthKitTap) {
                 HStack(spacing: 6) {
-                    Image(systemName: "heart.text.square.fill")
-                    Text("Connect Apple Health")
+                    if isRequestingHealthKit {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.pink)
+                    } else {
+                        Image(systemName: didRequestHealthKit ? "arrow.up.right.square.fill" : "heart.text.square.fill")
+                    }
+                    Text(connectButtonTitle)
                 }
                 .font(.system(size: 13, weight: .semibold))
                 .padding(.horizontal, 16)
@@ -209,10 +244,101 @@ struct EnergyView: View {
                 .foregroundStyle(.pink)
             }
             .buttonStyle(.plain)
+            .disabled(isRequestingHealthKit)
+            .task {
+                // Hydrate the asked-state from the shared breadcrumb so
+                // navigating away and back doesn't relabel the button to
+                // "Connect" after the user already granted access.
+                didRequestHealthKit = UserDefaults.standard.bool(forKey: Self.healthKitAskedKey)
+            }
+            .alert(healthAlertIsAccessIssue ? "Apple Health access needed" : "Not enough sleep tracked yet",
+                   isPresented: $showHealthAccessAlert) {
+                if healthAlertIsAccessIssue {
+                    Button("Open Health") { openHealthApp() }
+                    Button("Cancel", role: .cancel) {}
+                } else {
+                    Button("OK", role: .cancel) {}
+                }
+            } message: {
+                if healthAlertIsAccessIssue {
+                    Text("iOS only shows the Apple Health prompt once per app. Open the Health app → Browse → Sharing → Apps → Rung → turn on Sleep so Rung can read your data.")
+                } else {
+                    Text("Rung needs at least 3 nights of sleep tracking to model your energy curve. Wear your Apple Watch overnight or log sleep in the Health app, then check back.")
+                }
+            }
             #endif
         }
         .padding(.vertical, 30)
     }
+
+    #if os(iOS)
+    /// Two-tap behaviour for the Connect-Health button:
+    /// 1. First tap → fire `requestAuthorization`. iOS shows the system
+    ///    prompt (first-time users only). After it resolves we re-refresh
+    ///    and pick one of three outcomes: success (snapshot lands),
+    ///    "not enough nights yet" (granted but <3 sleep nights tracked),
+    ///    or "no access" (zero sleep samples returned — likely denied).
+    /// 2. Subsequent taps → skip straight to opening the Health app via
+    ///    its system URL scheme. Settings → Rung is the wrong place for
+    ///    HK toggles, which only live inside Health.
+    private func handleHealthKitTap() {
+        if didRequestHealthKit {
+            openHealthApp()
+            return
+        }
+        guard !isRequestingHealthKit else { return }
+        Task { @MainActor in
+            isRequestingHealthKit = true
+            do {
+                try await VerificationService.shared.requestAuthorization()
+            } catch {
+                // HK rarely throws here, but if it does the user just
+                // sees an unresponsive button — log so we can debug.
+                print("[EnergyView] HealthKit authorization failed: \(error)")
+            }
+            // Stamp the breadcrumb whether or not the user granted —
+            // iOS won't reshow the prompt regardless, so the only
+            // meaningful "asked" signal is "we made the call".
+            UserDefaults.standard.set(true, forKey: Self.healthKitAskedKey)
+            didRequestHealthKit = true
+            await service.refresh()
+            isRequestingHealthKit = false
+            if service.snapshot == nil {
+                // Distinguish "we got 1-2 nights — keep tracking" from
+                // "we got nothing — likely an access issue". Without
+                // this split the user sees "access needed" right after
+                // tapping Allow, which feels like a silent failure.
+                if let nights = service.lastSleepNightCount, nights > 0 {
+                    healthAlertIsAccessIssue = false
+                } else {
+                    healthAlertIsAccessIssue = true
+                }
+                showHealthAccessAlert = true
+            }
+        }
+    }
+
+    private var connectButtonTitle: String {
+        if isRequestingHealthKit { return "Requesting access…" }
+        return didRequestHealthKit ? "Open Health app" : "Connect Apple Health"
+    }
+
+    /// Open the Health app via its private URL scheme. Verified working
+    /// on iOS 16+; falls back to Settings → Rung when the scheme can't
+    /// be opened (e.g. Health app uninstalled — rare but possible on
+    /// non-iPhone iPad-OS or restricted devices).
+    private func openHealthApp() {
+        let healthURL = URL(string: "x-apple-health://")
+        let settingsURL = URL(string: UIApplication.openSettingsURLString)
+        Task { @MainActor in
+            if let healthURL, UIApplication.shared.canOpenURL(healthURL) {
+                UIApplication.shared.open(healthURL)
+            } else if let settingsURL {
+                UIApplication.shared.open(settingsURL)
+            }
+        }
+    }
+    #endif
 
     private var emptyStateIcon: String {
         #if os(macOS)
@@ -331,10 +457,21 @@ private struct EnergyGauge: View {
 
 // MARK: - Curve
 
-/// Hand-drawn energy-curve chart. Plots `forecast.curve(...)` from
-/// 6 AM to midnight (or wider if the user's wake/bed times push outside),
-/// fills a soft gradient under the line, and overlays markers for "now",
-/// next peak, and next dip.
+/// Today's energy curve, plotted from the user's typical wake time to
+/// their typical bedtime. Three chronobiology windows are annotated:
+/// - **Focus** (~3h after wake) — morning cortisol-driven alertness
+///   peak. Best for analytical / office work and learning.
+/// - **Move** (~7h after wake) — post-prandial / mid-day dip in cognitive
+///   demand, but body temperature is climbing. Best for gym, walks,
+///   errands, social calls — anything physical or low cog-load.
+/// - **Wind-down** (90 min before bed) — circadian alertness has
+///   dropped, sleep pressure is high. Best for reading, journaling,
+///   planning tomorrow. Avoid intense work and bright screens.
+///
+/// Sources: Borbély two-process model + Rise Science / Foster
+/// chronobiology framework. The window times are heuristics derived
+/// from the user's own median wake/bed pair so they shift with the
+/// actual schedule instead of using a clock-time default.
 private struct EnergyCurveChart: View {
     let forecast: EnergyForecast
 
@@ -342,12 +479,14 @@ private struct EnergyCurveChart: View {
 
     var body: some View {
         GeometryReader { geo in
-            let calendar = Calendar.current
-            let startOfToday = calendar.startOfDay(for: Date())
-            let chartStart = calendar.date(byAdding: .hour, value: 6, to: startOfToday) ?? startOfToday
-            let chartEnd = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? startOfToday
-            let samples = forecast.curve(from: chartStart, until: chartEnd, step: 15 * 60)
+            let chartStart = forecast.wakeTime
+            let chartEnd = forecast.bedTime
+            let safeRange = chartEnd > chartStart
+                ? chartStart...chartEnd
+                : chartStart...chartStart.addingTimeInterval(16 * 3600)
+            let samples = forecast.curve(from: safeRange.lowerBound, until: safeRange.upperBound, step: 15 * 60)
             let now = Date()
+            let windows = EnergyCurveChart.windows(for: forecast)
 
             ZStack {
                 // Grid lines at 25/50/75
@@ -366,14 +505,14 @@ private struct EnergyCurveChart: View {
                 // Filled area under the curve.
                 Path { path in
                     guard let first = samples.first else { return }
-                    let firstPoint = pointFor(sample: first, in: geo.size, range: chartStart...chartEnd)
+                    let firstPoint = pointFor(sample: first, in: geo.size, range: safeRange)
                     path.move(to: CGPoint(x: firstPoint.x, y: geo.size.height))
                     path.addLine(to: firstPoint)
                     for sample in samples.dropFirst() {
-                        path.addLine(to: pointFor(sample: sample, in: geo.size, range: chartStart...chartEnd))
+                        path.addLine(to: pointFor(sample: sample, in: geo.size, range: safeRange))
                     }
                     if let last = samples.last {
-                        let lastPoint = pointFor(sample: last, in: geo.size, range: chartStart...chartEnd)
+                        let lastPoint = pointFor(sample: last, in: geo.size, range: safeRange)
                         path.addLine(to: CGPoint(x: lastPoint.x, y: geo.size.height))
                     }
                     path.closeSubpath()
@@ -389,9 +528,9 @@ private struct EnergyCurveChart: View {
                 // The curve itself.
                 Path { path in
                     guard let first = samples.first else { return }
-                    path.move(to: pointFor(sample: first, in: geo.size, range: chartStart...chartEnd))
+                    path.move(to: pointFor(sample: first, in: geo.size, range: safeRange))
                     for sample in samples.dropFirst() {
-                        path.addLine(to: pointFor(sample: sample, in: geo.size, range: chartStart...chartEnd))
+                        path.addLine(to: pointFor(sample: sample, in: geo.size, range: safeRange))
                     }
                 }
                 .stroke(
@@ -403,13 +542,26 @@ private struct EnergyCurveChart: View {
                     style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
                 )
 
+                // Annotated windows — Focus, Move, Wind-down. Each one
+                // sits on the curve at the energy level for that time so
+                // the badge feels glued to the line rather than floating.
+                ForEach(windows.filter { safeRange.contains($0.time) }) { window in
+                    let energy = forecast.energy(at: window.time)
+                    let point = pointFor(
+                        sample: (window.time, energy),
+                        in: geo.size,
+                        range: safeRange
+                    )
+                    annotation(window: window, at: point)
+                }
+
                 // Now marker — vertical line + filled dot at curve height.
-                if now >= chartStart && now <= chartEnd {
+                if now >= safeRange.lowerBound && now <= safeRange.upperBound {
                     let nowEnergy = forecast.energy(at: now)
                     let nowPoint = pointFor(
                         sample: (now, nowEnergy),
                         in: geo.size,
-                        range: chartStart...chartEnd
+                        range: safeRange
                     )
                     Path { path in
                         path.move(to: CGPoint(x: nowPoint.x, y: 0))
@@ -423,12 +575,35 @@ private struct EnergyCurveChart: View {
                         .position(nowPoint)
                 }
 
-                // X-axis labels at every 6h tick. Static label set keeps
-                // layout predictable; dynamic ticks would jitter as the
-                // chart updates.
-                hourLabels(geo: geo, range: chartStart...chartEnd)
+                // X-axis labels: wake / mid / peak / bed instead of a
+                // generic clock-time set, so the chart anchors to the
+                // user's actual day.
+                axisLabels(geo: geo, range: safeRange)
             }
         }
+    }
+
+    private func annotation(window: EnergyWindow, at point: CGPoint) -> some View {
+        VStack(spacing: 3) {
+            Text(window.label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(window.tint)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(window.tint.opacity(colorScheme == .dark ? 0.20 : 0.14))
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(window.tint.opacity(0.32), lineWidth: 0.5)
+                )
+            Circle()
+                .fill(window.tint)
+                .frame(width: 7, height: 7)
+                .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
+        }
+        .position(x: point.x, y: max(point.y - 14, 14))
     }
 
     private func pointFor(
@@ -447,29 +622,61 @@ private struct EnergyCurveChart: View {
     }
 
     @ViewBuilder
-    private func hourLabels(geo: GeometryProxy, range: ClosedRange<Date>) -> some View {
-        let calendar = Calendar.current
-        let labels: [(label: String, ratio: Double)] = stride(from: 0, through: 4, by: 1).compactMap { i in
-            let interval = range.upperBound.timeIntervalSince(range.lowerBound)
-            let ratio = Double(i) / 4
-            let date = range.lowerBound.addingTimeInterval(interval * ratio)
-            let hour = calendar.component(.hour, from: date)
-            let label: String
-            switch hour {
-            case 0:        label = "12a"
-            case 12:       label = "12p"
-            case 1...11:   label = "\(hour)a"
-            default:       label = "\(hour - 12)p"
-            }
-            return (label, ratio)
-        }
-        ForEach(Array(labels.enumerated()), id: \.offset) { _, item in
-            Text(item.label)
+    private func axisLabels(geo: GeometryProxy, range: ClosedRange<Date>) -> some View {
+        let formatter: DateFormatter = {
+            let f = DateFormatter()
+            f.dateFormat = "h a"
+            return f
+        }()
+        let total = range.upperBound.timeIntervalSince(range.lowerBound)
+        let stops: [(Date, String)] = [
+            (range.lowerBound, "Wake"),
+            (range.lowerBound.addingTimeInterval(total / 2), formatter.string(from: range.lowerBound.addingTimeInterval(total / 2)).lowercased()),
+            (range.upperBound, "Bed"),
+        ]
+        ForEach(Array(stops.enumerated()), id: \.offset) { _, stop in
+            let elapsed = stop.0.timeIntervalSince(range.lowerBound)
+            let ratio = total > 0 ? elapsed / total : 0
+            Text(stop.1)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.tertiary)
-                .position(x: geo.size.width * item.ratio, y: geo.size.height + 8)
+                .position(x: geo.size.width * ratio, y: geo.size.height + 10)
         }
     }
+
+    /// Three time-of-day windows derived from the user's wake/bed pair.
+    /// We use heuristic offsets rather than curve extrema because the
+    /// two-process model is monotonic between wake and bed (no real
+    /// "afternoon dip" feature in the curve itself), but chronobiology
+    /// research still shows the windows below align with measurable
+    /// shifts in cortisol, body temperature, and cognitive load.
+    static func windows(for forecast: EnergyForecast) -> [EnergyWindow] {
+        let wake = forecast.wakeTime
+        let bed = forecast.bedTime
+        let dayLength = bed.timeIntervalSince(wake)
+        // Anchor windows by fraction of waking day so a 10h or 18h day
+        // both produce sensibly-spaced annotations.
+        let focusTime = wake.addingTimeInterval(dayLength * 0.20)
+        let moveTime = wake.addingTimeInterval(dayLength * 0.55)
+        let windDownTime = bed.addingTimeInterval(-90 * 60)
+        return [
+            EnergyWindow(kind: .focus, label: "Focus", time: focusTime, tint: .green),
+            EnergyWindow(kind: .move, label: "Gym", time: moveTime, tint: .orange),
+            EnergyWindow(kind: .windDown, label: "Wind-down", time: windDownTime, tint: .indigo),
+        ]
+    }
+}
+
+/// Single annotated window on the energy curve. `label` is what the
+/// user reads on the badge; the matching `recommendationsSection`
+/// reuses `kind` to look up the long-form copy.
+struct EnergyWindow: Identifiable {
+    enum Kind { case focus, move, windDown }
+    let id = UUID()
+    let kind: Kind
+    let label: String
+    let time: Date
+    let tint: Color
 }
 
 // MARK: - Chronotype badge

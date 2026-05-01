@@ -324,6 +324,12 @@ final class HabitBackendStore: ObservableObject {
     @Published var isSyncing = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
+    /// Bumped every time the server returns 404 for a habit/task/check
+    /// the local store thought existed. The dashboard owner observes
+    /// this to trigger a full SwiftData↔backend reconcile so the local
+    /// copy converges to whatever the server currently has — server-wins
+    /// applied to the divergence the user just bumped into.
+    @Published var staleResourceTick: Int = 0
     /// Set to true on a successful register() call so the UI can force the
     /// onboarding overview to appear regardless of any stale UserDefaults
     /// onboarded_<userId> key. UI should reset this to false after consuming.
@@ -1686,6 +1692,16 @@ final class HabitBackendStore: ObservableObject {
         // Surface a single soft status line instead of a per-request error toast.
         if case HabitBackendError.network = error {
             errorMessage = Self.offlineStatusMessage
+            return
+        }
+        // 404s mean the local store is out of sync with the server (e.g. a
+        // habit was deleted on another device). Don't show the raw "habit
+        // not found" message — bump the staleness tick so the dashboard
+        // re-fetches and the reconcile heals the divergence with server
+        // state as the source of truth.
+        if case HabitBackendError.notFound = error {
+            errorMessage = nil
+            staleResourceTick &+= 1
             return
         }
         errorMessage = error.localizedDescription

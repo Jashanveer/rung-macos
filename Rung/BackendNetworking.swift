@@ -556,6 +556,9 @@ actor BackendAPIClient {
                 }
                 let msg = (try? decoder.decode(ApiErrorResponse.self, from: data).message)
                     ?? HTTPURLResponse.localizedString(forStatusCode: http.statusCode)
+                if http.statusCode == 404 {
+                    throw HabitBackendError.notFound(msg)
+                }
                 throw HabitBackendError.server(msg)
             }
             if Response.self == EmptyResponse.self, let empty = EmptyResponse() as? Response {
@@ -1087,6 +1090,12 @@ enum HabitBackendError: LocalizedError {
     case invalidResponse
     case server(String)
     case network(String)
+    /// Server returned 404 for a resource the client thought existed.
+    /// Caller should treat this as "your local copy is stale" and trigger
+    /// a reconcile — never surface the raw "habit not found" message to
+    /// the user, since the right fix is to converge to server state, not
+    /// nag them about a divergence the app can heal itself.
+    case notFound(String)
 
     var errorDescription: String? {
         switch self {
@@ -1094,6 +1103,7 @@ enum HabitBackendError: LocalizedError {
         case .invalidResponse:  return "The backend returned an invalid response."
         case .server(let m):    return m
         case .network(let m):   return "Could not reach \(BackendEnvironment.displayHost). \(m)"
+        case .notFound(let m):  return m
         }
     }
 

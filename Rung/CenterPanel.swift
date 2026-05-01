@@ -18,17 +18,13 @@ struct CenterPanel: View {
     let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?, TaskPriority?) -> Void
     let onToggleHabit: (Habit) -> Void
     let onDeleteHabit: (Habit) -> Void
-    /// Optional handler invoked when the calendar banner's "freeze today"
-    /// CTA is tapped. Caller is responsible for spending a freeze (backend
-    /// call + UI refresh). Nil disables the CTA — the banner still renders.
-    var onFreezeToday: (() -> Void)? = nil
-    /// Number of streak freezes the user owns. Drives whether the freeze
-    /// CTA appears in the calendar banner.
-    var freezesAvailable: Int = 0
     /// Backend store routed into AddHabitBar to enable the LLM
     /// frequency-parse fallback. Optional so previews / tests can omit it.
     var backendStore: HabitBackendStore? = nil
 
+    /// Drives the subtle "X meetings today" pill that floats below the
+    /// greeting. The pill replaces the older purple `CalendarInsightsBanner`
+    /// — same data, far less visual weight.
     @StateObject private var calendarService = CalendarService.shared
 
     @State private var aiGreeting: String?
@@ -74,12 +70,19 @@ struct CenterPanel: View {
 
             TodayHeader(greeting: displayGreeting, isCompact: isCompact)
 
-            CalendarInsightsBanner(
-                service: calendarService,
-                hasIncompleteHabits: !pendingHabits.isEmpty,
-                freezesAvailable: freezesAvailable,
-                onFreezeToday: { onFreezeToday?() }
-            )
+            // The pill renders whenever today has at least one timed
+            // event. We don't gate on `isAuthorized` — the demo seeder
+            // (DEBUG only) bypasses EventKit, and real users without
+            // permission have an empty `todaysEvents` list anyway, so
+            // dropping the guard simplifies the condition without
+            // surfacing the pill spuriously.
+            if todaysMeetingCount > 0 {
+                MeetingsPill(
+                    count: todaysMeetingCount,
+                    totalMinutes: calendarService.meetingMinutesToday
+                )
+                .transition(.opacity.combined(with: .offset(y: -4)))
+            }
 
             AddHabitBar(
                 newHabitTitle: $newHabitTitle,
@@ -139,6 +142,14 @@ struct CenterPanel: View {
             hasRequestedGreeting = true
             requestAIGreeting()
         }
+        .task {
+            #if DEBUG
+            // Seed a representative "busy day" so the MeetingsPill can
+            // be previewed on dev builds without Calendar permission.
+            // No-op once real events are present.
+            calendarService.loadDemoEventsIfEmpty()
+            #endif
+        }
     }
 
     private var displayGreeting: String {
@@ -149,6 +160,10 @@ struct CenterPanel: View {
             totalHabits: metrics.totalHabits,
             currentStreak: metrics.currentPerfectStreak
         )
+    }
+
+    private var todaysMeetingCount: Int {
+        calendarService.todaysEvents.filter { !$0.isAllDay }.count
     }
 
     private func requestAIGreeting() {
@@ -190,6 +205,92 @@ struct CenterPanel: View {
         Perfect streak: \(metrics.currentPerfectStreak) days. Be warm and motivating. \
         Output only the greeting, nothing else.
         """
+    }
+}
+
+// MARK: - Meetings Pill
+
+/// Subtle "X meetings · Yh today" notification chip shown beneath the
+/// dashboard greeting. Replaces the older purple `CalendarInsightsBanner`
+/// so the meeting count is present but unobtrusive — no CTA, no
+/// background card, just a tiny tinted capsule.
+///
+/// The capsule's tint encodes how full the day is so a glance is enough
+/// to know whether to schedule extra habits today or take it easy:
+/// - **Green** ( < 2h ) — light day, plenty of room.
+/// - **Blue** ( 2–4h ) — moderate; mostly normal.
+/// - **Orange** ( 4–6h ) — busy; consider deferring optional habits.
+/// - **Red** ( ≥ 6h ) — back-to-back; protect any remaining focus block.
+private struct MeetingsPill: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let count: Int
+    let totalMinutes: Int
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "calendar")
+                .font(.system(size: 9, weight: .semibold))
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(colorScheme == .dark ? 0.18 : 0.12))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(tint.opacity(0.30), lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("\(label). \(busynessLabel) day."))
+    }
+
+    private var label: String {
+        let countLabel = count == 1 ? "1 meeting" : "\(count) meetings"
+        guard totalMinutes >= 30 else {
+            return "\(countLabel) today"
+        }
+        return "\(countLabel) · \(durationLabel) today"
+    }
+
+    /// "30m" / "1h" / "1h 15m" / "5h" — drops the minutes suffix when the
+    /// total lands on a whole hour so a 4h block doesn't read "4h 0m".
+    private var durationLabel: String {
+        if totalMinutes < 60 {
+            return "\(totalMinutes)m"
+        }
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if minutes == 0 {
+            return "\(hours)h"
+        }
+        return "\(hours)h \(minutes)m"
+    }
+
+    /// Buckets in hours: < 2 light, 2–4 moderate, 4–6 busy, ≥ 6 packed.
+    /// Boundaries are inclusive on the left so a flat 4-hour day is
+    /// already "busy" rather than "moderate".
+    private var tint: Color {
+        let hours = Double(totalMinutes) / 60.0
+        switch hours {
+        case ..<2:  return .green
+        case ..<4:  return .blue
+        case ..<6:  return .orange
+        default:    return .red
+        }
+    }
+
+    private var busynessLabel: String {
+        let hours = Double(totalMinutes) / 60.0
+        switch hours {
+        case ..<2:  return "Light"
+        case ..<4:  return "Moderate"
+        case ..<6:  return "Busy"
+        default:    return "Packed"
+        }
     }
 }
 

@@ -59,11 +59,16 @@ struct CalendarSheet: View {
 
     let habits: [Habit]
     let onClose: () -> Void
+
     @State private var displayMode: CalendarDisplayMode = .perfectDays
-    @State private var zoomedMonth: Int?
-    /// Top-level toggle (iPad / macOS only). The phone path has its own
-    /// dedicated Energy tab so it never reads this flag.
+    /// Calendar vs. Energy view selector. Gated by `showEnergyView`
+    /// (Account setting) so users without Apple Watch can hide Energy.
     @State private var sheetMode: CalendarSheetMode = .calendar
+
+    /// User-controlled toggle on the Account page. Defaults to true so
+    /// existing users don't lose the Energy view. When false the Cal /
+    /// Energy switcher disappears and `sheetMode` is pinned to .calendar.
+    @AppStorage("Settings.showEnergyView") private var showEnergyView = true
 
     private var isCompact: Bool {
         #if os(iOS)
@@ -95,50 +100,6 @@ struct CalendarSheet: View {
     private var year: Int { Calendar.current.component(.year, from: Date()) }
 
     var body: some View {
-        ZStack {
-            content
-                .opacity(zoomedMonth == nil ? 1 : 0)
-
-            if let month = zoomedMonth {
-                if isCompact {
-                    PerfectDaysMonthDetailView(
-                        month: month,
-                        year: year,
-                        habits: streakHabits,
-                        perfectDayKeys: perfectDayKeys,
-                        dailyCompletionCounts: dailyCompletionCounts,
-                        totalHabits: totalHabits,
-                        namespace: monthTransitionNamespace,
-                        onClose: {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                                zoomedMonth = nil
-                            }
-                        }
-                    )
-                    .transition(.scale(scale: 0.9).combined(with: .opacity))
-                } else {
-                    MonthDetailView(
-                        month: month,
-                        year: year,
-                        dailyCompletionCounts: dailyCompletionCounts,
-                        perfectDayKeys: perfectDayKeys,
-                        displayMode: displayMode,
-                        totalHabits: totalHabits,
-                        namespace: monthTransitionNamespace,
-                        onClose: {
-                            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                                zoomedMonth = nil
-                            }
-                        }
-                    )
-                    .transition(.scale(scale: 0.9).combined(with: .opacity))
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
         if isCompact {
             compactBody
         } else {
@@ -147,28 +108,55 @@ struct CalendarSheet: View {
     }
 
     private var compactBody: some View {
-        PerfectDaysYearView(
-            year: year,
-            perfectDayKeys: perfectDayKeys,
-            dailyCompletionCounts: dailyCompletionCounts,
-            totalHabits: totalHabits,
-            displayMode: $displayMode,
-            namespace: monthTransitionNamespace,
-            onTapMonth: { month in
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
-                    zoomedMonth = month
+        VStack(spacing: 12) {
+            if showEnergyView {
+                HStack {
+                    Spacer()
+                    CalendarSheetModeToggle(mode: $sheetMode, colorScheme: colorScheme)
                 }
+                .padding(.horizontal, 4)
             }
-        )
+
+            switch sheetMode {
+            case .calendar:
+                PerfectDaysYearView(
+                    year: year,
+                    perfectDayKeys: perfectDayKeys,
+                    dailyCompletionCounts: dailyCompletionCounts,
+                    totalHabits: totalHabits,
+                    displayMode: $displayMode,
+                    namespace: monthTransitionNamespace,
+                    onTapMonth: { _ in }
+                )
+                .transition(.opacity.combined(with: .offset(y: 6)))
+            case .energy:
+                EnergyView(service: SleepInsightsService.shared)
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+            }
+        }
+        .animation(.spring(response: 0.38, dampingFraction: 0.86), value: sheetMode)
+        .onChange(of: showEnergyView) { _, newValue in
+            // If the user disables Energy view from Settings while it's
+            // active, snap back to the Calendar mode so they don't get
+            // stuck on a hidden tab.
+            if !newValue && sheetMode == .energy {
+                sheetMode = .calendar
+            }
+        }
     }
 
     private var regularBody: some View {
         VStack(alignment: .leading, spacing: 14) {
+            // The outer title used to read "Habit Activity" / "Energy"
+            // but `YearPerfectCalendar` already prints "2026 Habit
+            // Activity" on its own row, and `EnergyView` opens with its
+            // own "Energy now" heading — so we keep the outer header to
+            // controls only.
             HStack {
-                Text(sheetMode == .calendar ? displayMode.title : "Energy")
-                    .font(.headline)
                 Spacer()
-                CalendarSheetModeToggle(mode: $sheetMode, colorScheme: colorScheme)
+                if showEnergyView {
+                    CalendarSheetModeToggle(mode: $sheetMode, colorScheme: colorScheme)
+                }
                 if sheetMode == .calendar {
                     CalendarModeToggle(mode: $displayMode, colorScheme: colorScheme)
                 }
@@ -184,10 +172,10 @@ struct CalendarSheet: View {
                 .buttonStyle(.plain)
             }
 
-            // Both modes share a fixed-height container so flipping the
-            // toggle never resizes the bottom sheet — same window, two
-            // views. Height roughly matches a year-grid calendar's
-            // natural size on macOS / iPad.
+            // Fixed-height container so flipping the Calendar / Energy
+            // toggle never resizes the bottom sheet. Sized to the
+            // year-grid's natural footprint with a small breathing
+            // margin — Energy mode scrolls inside the same window.
             Group {
                 switch sheetMode {
                 case .calendar:
@@ -204,7 +192,7 @@ struct CalendarSheet: View {
                     EnergyView(service: SleepInsightsService.shared)
                 }
             }
-            .frame(height: 540)
+            .frame(height: 420)
             .transition(.opacity.combined(with: .offset(y: 6)))
         }
         .animation(.spring(response: 0.38, dampingFraction: 0.86), value: sheetMode)
@@ -224,6 +212,11 @@ struct CalendarSheet: View {
                     }
                 }
         )
+        .onChange(of: showEnergyView) { _, newValue in
+            if !newValue && sheetMode == .energy {
+                sheetMode = .calendar
+            }
+        }
     }
 }
 
@@ -1100,6 +1093,11 @@ struct CalendarSheetModeToggle: View {
     @Binding var mode: CalendarSheetMode
     let colorScheme: ColorScheme
 
+    /// Each segment fills this exact width so flipping between
+    /// "Calendar" (longer) and "Energy" (shorter) doesn't resize the
+    /// pill — sized to fit "Calendar" + icon at .system(size: 11).
+    private static let segmentWidth: CGFloat = 84
+
     var body: some View {
         HStack(spacing: 2) {
             ForEach(CalendarSheetMode.allCases) { item in
@@ -1113,13 +1111,13 @@ struct CalendarSheetModeToggle: View {
                             .font(.system(size: 10, weight: .semibold))
                         Text(item.title)
                             .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
                     }
-                    .foregroundStyle(mode == item ? Color.white : .secondary)
-                    .padding(.horizontal, 9)
-                    .frame(height: 22)
+                    .foregroundStyle(mode == item ? Color.white : Color.primary.opacity(0.78))
+                    .frame(width: Self.segmentWidth, height: 22)
                     .background(
                         Capsule(style: .continuous)
-                            .fill(mode == item ? Color.indigo : Color.clear)
+                            .fill(mode == item ? activeFill(for: item) : Color.clear)
                     )
                 }
                 .buttonStyle(.plain)
@@ -1131,6 +1129,16 @@ struct CalendarSheetModeToggle: View {
             Capsule(style: .continuous)
                 .fill(CleanShotTheme.controlFill(for: colorScheme))
         )
+    }
+
+    /// Two-tone active fill: Calendar = green (matches the heatmap's
+    /// success colour), Energy = indigo (matches the EnergyView gauge
+    /// tint). Keeps the active segment visually rooted to its content.
+    private func activeFill(for item: CalendarSheetMode) -> Color {
+        switch item {
+        case .calendar: return CleanShotTheme.success
+        case .energy:   return Color.indigo
+        }
     }
 }
 
