@@ -7,10 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		944AB57390090127A4CAF17E /* RungWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C1DA33907F824AA520B8E3E6 /* RungWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		944AB57390090127A4CAF17E /* RungWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C1DA33907F824AA520B8E3E6 /* RungWidgets.appex */; platformFilters = (macos, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9BD3C28B2FA1A18D00F9F0E5 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
 		FA112B4AA34979A6793FF969 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
-		FC69D715931379676998B8A7 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EAFAFB09EE3A870B45A5981A /* Cocoa.framework */; };
+		FC69D715931379676998B8A7 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EAFAFB09EE3A870B45A5981A /* Cocoa.framework */; platformFilters = (macos, ); };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -91,6 +91,11 @@
 			path = RungShared;
 			sourceTree = "<group>";
 		};
+		9B7D76FC2FA51CFE00BA821C /* Rung-iOS-Sources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Rung-iOS-Sources";
+			sourceTree = "<group>";
+		};
 		9BA6DAFE2F8F3C8E009AA3BC /* Rung */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -166,6 +171,7 @@
 		9BA6DAF32F8F3C8E009AA3BC = {
 			isa = PBXGroup;
 			children = (
+				9B7D76FC2FA51CFE00BA821C /* Rung-iOS-Sources */,
 				9BA6DAFE2F8F3C8E009AA3BC /* Rung */,
 				9BA6DB0E2F8F3C90009AA3BC /* RungTests */,
 				9BA6DB182F8F3C90009AA3BC /* RungUITests */,
@@ -206,6 +212,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				721684DBC3B6D1921098EDDD /* RungShared */,
+				9B7D76FC2FA51CFE00BA821C /* Rung-iOS-Sources */,
 				9BA6DAFE2F8F3C8E009AA3BC /* Rung */,
 			);
 			name = Rung;
@@ -392,6 +399,7 @@
 		597966E2F1E90C04BB45797F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = RungWidgets;
+			platformFilters = (macos, );
 			target = F154B69396161217305A3106 /* RungWidgets */;
 			targetProxy = 272604538D17D46C28F58E71 /* PBXContainerItemProxy */;
 		};
@@ -435,6 +443,9 @@
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -569,6 +580,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Rung/macOS-Only/*.swift";
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "Rung-iOS-Sources/*.swift";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Rung/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Rung;
@@ -619,6 +632,8 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphone*]" = "Rung/macOS-Only/*.swift";
+				"EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]" = "Rung-iOS-Sources/*.swift";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Rung/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Rung;
@@ -785,6 +800,9 @@
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
