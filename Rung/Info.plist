@@ -12,10 +12,20 @@
 	<string>Rung uses Apple Health data to verify your habits and award accurate leaderboard points.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Rung can log workouts and mindfulness minutes back to Apple Health.</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>Rung sends habit reminders, streak warnings, and accountability nudges from your mentor.</string>
+	<key>NSFamilyControlsUsageDescription</key>
+	<string>Rung uses Screen Time limits to verify your social-media-detox habits without tracking what you do in those apps.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Rung reads today's events so it can suggest a streak freeze on busy days and surface tasks tied to your meetings.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Rung reads today's events so it can suggest a streak freeze on busy days and surface tasks tied to your meetings.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

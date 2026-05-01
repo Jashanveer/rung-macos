@@ -399,7 +399,9 @@
 		597966E2F1E90C04BB45797F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = RungWidgets;
-			platformFilters = (macos, );
+			platformFilters = (
+				macos,
+			);
 			target = F154B69396161217305A3106 /* RungWidgets */;
 			targetProxy = 272604538D17D46C28F58E71 /* PBXContainerItemProxy */;
 		};
@@ -431,6 +433,7 @@
 				INFOPLIST_FILE = RungWidgets/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Rung Widgets";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026. All rights reserved.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -444,10 +447,9 @@
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -572,6 +574,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphone*]" = "Rung-iOS-Sources/Resources/Rung-iOS.Debug.entitlements";
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = Rung/Rung.Debug.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
@@ -624,6 +627,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphone*]" = "Rung-iOS-Sources/Resources/Rung-iOS.Release.entitlements";
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = Rung/Rung.Release.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 3;
@@ -788,6 +792,7 @@
 				INFOPLIST_FILE = RungWidgets/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Rung Widgets";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026. All rights reserved.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -801,10 +806,9 @@
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
