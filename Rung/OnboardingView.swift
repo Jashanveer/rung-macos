@@ -86,6 +86,66 @@ struct OnboardingView: View {
         .onAppear { startSequence() }
     }
 
+    /// Default quick-pick canonical habits — picked because they cover
+    /// the common verification sources (workouts, mindfulness, steps,
+    /// reading) so a new user gets one of each tier on day one.
+    private static let quickPickKeys: [String] = ["run", "workout", "meditate", "read", "water"]
+
+    private var quickPicks: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Or pick a few to get started")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .tracking(0.4)
+                .textCase(.uppercase)
+                .frame(maxWidth: 520, alignment: .leading)
+
+            HStack(spacing: 8) {
+                ForEach(Self.quickPickKeys, id: \.self) { key in
+                    if let canonical = CanonicalHabits.all.first(where: { $0.key == key }) {
+                        Button {
+                            stagedHabits.append(canonical.displayName)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: Self.quickPickIcon(for: canonical))
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(canonical.displayName)
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(Color.primary.opacity(0.06))
+                            )
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+                            )
+                            .foregroundStyle(.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxWidth: 520, alignment: .leading)
+        }
+    }
+
+    private static func quickPickIcon(for canonical: CanonicalHabit) -> String {
+        switch canonical.source {
+        case .healthKitWorkout:    return "figure.run"
+        case .healthKitSteps:      return "shoeprints.fill"
+        case .healthKitMindful:    return "brain.head.profile"
+        case .healthKitSleep:      return "bed.double.fill"
+        case .healthKitBodyMass:   return "scalemass.fill"
+        case .healthKitHydration:  return "drop.fill"
+        case .healthKitNoAlcohol:  return "wineglass.fill"
+        case .screenTimeSocial:    return "iphone.slash"
+        case .selfReport:          return "book.fill"
+        }
+    }
+
     private var compactHorizontalPadding: CGFloat {
         #if os(iOS)
         24
@@ -207,6 +267,16 @@ struct OnboardingView: View {
             .cleanShotSurface(shape: Capsule(), level: .control, isActive: fieldFocused)
             .animation(.easeOut(duration: 0.15), value: habitInput.isEmpty)
             .frame(maxWidth: 520)
+
+            // Quick picks — a row of canonical habits the user can
+            // one-tap into the staged list without typing. Each one is
+            // verifiable, so the verification badge below auto-appears
+            // and the user sees the proof-based hook within seconds.
+            // Hidden once any habit is staged so the surface stays
+            // calm; users who want more can keep typing.
+            if stagedHabits.isEmpty {
+                quickPicks
+            }
 
             if !stagedHabits.isEmpty {
                 VStack(spacing: 6) {
