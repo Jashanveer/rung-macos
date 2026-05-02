@@ -64,30 +64,38 @@ final class WatchConnectivityService: NSObject {
         pendingPushTimer?.invalidate()
         pendingPushTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                self?.pushSnapshot(snapshot)
+                self?.pushSnapshot(snapshot, force: false)
             }
         }
     }
 
     /// Push immediately — used when the Watch explicitly asks for a fresh
-    /// snapshot (`requestSnapshot` action).
+    /// snapshot (`requestSnapshot` action). Bypasses the byte-identical
+    /// dedup so an asking watch always gets a fresh payload, even if the
+    /// last push happened while the watch was offline and we cached the
+    /// JSON as "already sent".
     func pushSnapshotNow(habits: [Habit]) {
         let snapshot = makeSnapshot(habits: habits)
-        pushSnapshot(snapshot)
+        pushSnapshot(snapshot, force: true)
     }
 
-    private func pushSnapshot(_ snapshot: WatchSnapshot) {
+    private func pushSnapshot(_ snapshot: WatchSnapshot, force: Bool) {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
-        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
+        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else {
+            print("[WatchConnectivity] push skipped — activation=\(session.activationState.rawValue) paired=\(session.isPaired) installed=\(session.isWatchAppInstalled)")
+            return
+        }
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(snapshot) else { return }
 
         // Skip if the payload is byte-identical to the last one we pushed —
-        // saves Watch wake-ups while typing.
-        if data == lastPushedJSON { return }
+        // saves Watch wake-ups while typing. `force = true` (used when the
+        // watch explicitly asks for a refresh) bypasses this guard so we
+        // never silently drop a request just because nothing changed.
+        if !force, data == lastPushedJSON { return }
         lastPushedJSON = data
 
         let payload: [String: Any] = ["snapshot": data]
@@ -536,6 +544,12 @@ extension WatchConnectivityService: WCSessionDelegate {
                               activationDidCompleteWith activationState: WCSessionActivationState,
                               error: Error?) {
         Task { @MainActor in
+            // Reset the dedup cache so the first post-activation push is
+            // always delivered, even if the previous session encoded an
+            // identical payload. Without this, a watch that boots after
+            // the iPhone would never see the cached "first" snapshot
+            // because pushSnapshot would short-circuit on byte equality.
+            self.lastPushedJSON = nil
             self.forcePush()
         }
     }

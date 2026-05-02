@@ -132,6 +132,19 @@ struct ContentView: View {
                 backend: backend,
                 modelContext: modelContext
             )
+            #if os(iOS)
+            // Hand the backend store to the Watch broadcaster so the
+            // snapshot it pushes carries leaderboard / level / freeze
+            // data, and so watch-originated toggles can stamp a
+            // verification tier and bump staleResourceTick. Without
+            // this attach, the watch sees only fallback values and
+            // tap-from-watch never reaches the backend.
+            WatchConnectivityService.shared.attach(backend: backend)
+            // Push an immediate snapshot so a watch app that boots
+            // after the iPhone activates doesn't sit on the
+            // "Connecting" view waiting for the next 15s heartbeat.
+            WatchConnectivityService.shared.pushSnapshotNow(habits: habits)
+            #endif
             Task { await AutoVerificationCoordinator.shared.scan(habits: habits) }
         }
         .onChange(of: scenePhase) { _, newPhase in
