@@ -224,6 +224,10 @@ struct CenterPanel: View {
         //   - Streak status (only flag risk if streak is established AND
         //     habits remain, so we don't badger users early in the day)
         //   - Today's meeting load (lets the coach defer to free time)
+        //   - Sleep debt (so we can recommend recovery / lower load on
+        //     short-sleep days instead of pushing through)
+        //   - Streak freezes available (the anti-burnout escape hatch)
+        //   - Friend / mentor signal (who's also pushing today)
         //   - Time of day (urgency increases later in the day)
         let pending = pendingHabits.map(\.title)
         let pendingPreview = pending.prefix(3).joined(separator: ", ")
@@ -238,6 +242,42 @@ struct CenterPanel: View {
             ? "\(meetings) meeting\(meetings == 1 ? "" : "s") today"
             : "calendar is open today"
 
+        // Sleep debt — surfaces only when meaningful (≥ 1h) so we don't
+        // falsely flag rested users. Negative debt means "ahead", which
+        // is also useful information.
+        let sleepLine: String = {
+            guard let forecast = SleepInsightsService.shared.forecast else {
+                return "no sleep data"
+            }
+            let debt = forecast.sleepDebtHours
+            if debt >= 1 {
+                return String(format: "sleep debt: %.1fh — recovery matters today", debt)
+            }
+            if debt <= -1 {
+                return "well rested"
+            }
+            return "sleep on track"
+        }()
+
+        // Streak freezes available — knowing this lets the coach
+        // suggest "use a freeze" on a brutal day instead of guilting
+        // the user into pushing through.
+        let freezeLine: String = {
+            let freezes = backendStore?.dashboard?.rewards.freezesAvailable ?? 0
+            return freezes > 0
+                ? "\(freezes) flexible-streak token\(freezes == 1 ? "" : "s") available"
+                : "no streak tokens available"
+        }()
+
+        // Mentor / friend signal — if a mentor has been active this
+        // session, the coach can reference them; otherwise stay silent.
+        let mentorLine: String = {
+            guard let dash = backendStore?.dashboard, let match = dash.match else {
+                return "no mentor active"
+            }
+            return "mentor: \(match.mentor.displayName)"
+        }()
+
         return """
         You are a coach inside a habit-tracker app. Output a single short \
         next-action sentence (max 10 words) telling the user the one thing \
@@ -249,6 +289,9 @@ struct CenterPanel: View {
         Pending today: \(pendingPreview)\(pending.count > 3 ? " and \(pending.count - 3) more" : "").
         Streak: \(streakStatus).
         Schedule: \(meetingsLine).
+        Sleep: \(sleepLine).
+        Backup: \(freezeLine).
+        Social: \(mentorLine).
 
         Reply with only the sentence — no quotes, no preamble.
         """
