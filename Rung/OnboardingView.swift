@@ -94,6 +94,24 @@ struct OnboardingView: View {
         #endif
     }
 
+    /// Short, source-specific badge for canonical habits — keeps the
+    /// onboarding card scannable while still telegraphing what kind of
+    /// proof Rung will collect. Falls back to a generic label so a
+    /// future canonical source we haven't styled yet still renders.
+    private func verificationBadgeText(for canonical: CanonicalHabit) -> String {
+        switch canonical.source {
+        case .healthKitWorkout:    return "Verified by Apple Health"
+        case .healthKitSteps:      return "Verified by Apple Health (steps)"
+        case .healthKitMindful:    return "Verified by Apple Health (Mindful)"
+        case .healthKitSleep:      return "Verified by Apple Health (sleep)"
+        case .healthKitBodyMass:   return "Verified by Apple Health"
+        case .healthKitHydration:  return "Verified by Apple Health"
+        case .healthKitNoAlcohol:  return "Verified by Apple Health"
+        case .screenTimeSocial:    return "Verified by Screen Time"
+        case .selfReport:          return "Self-reported"
+        }
+    }
+
     private func beginExit() {
         guard !isExiting else { return }
         pendingHabits = stagedHabits
@@ -197,9 +215,28 @@ struct OnboardingView: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(CleanShotTheme.accent)
                                 .font(.system(size: 15))
-                            Text(habit)
-                                .font(.system(size: 14, weight: .medium))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(habit)
+                                    .font(.system(size: 14, weight: .medium))
+                                // Telegraph the verified-habits hook on the
+                                // very first habit the user stages: if the
+                                // title matches a canonical alias with a
+                                // non-self-report tier, show a tiny green
+                                // "Apple Health" badge so the user sees
+                                // proof-based tracking before they even
+                                // finish onboarding.
+                                if let canonical = CanonicalHabits.match(userTitle: habit),
+                                   canonical.tier != .selfReport {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "heart.fill")
+                                            .font(.system(size: 8, weight: .bold))
+                                        Text(verificationBadgeText(for: canonical))
+                                            .font(.system(size: 10, weight: .semibold))
+                                    }
+                                    .foregroundStyle(Color.green)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             Button {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
                                     stagedHabits.removeAll { $0 == habit }
@@ -214,7 +251,8 @@ struct OnboardingView: View {
                             .buttonStyle(.plain)
                         }
                         .padding(.horizontal, 14)
-                        .frame(height: 42)
+                        .frame(minHeight: 42)
+                        .padding(.vertical, 6)
                         .cleanShotSurface(
                             shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
                             level: .control
