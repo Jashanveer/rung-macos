@@ -101,10 +101,50 @@ struct WatchSnapshot: Codable, Equatable {
 
     // MARK: Empty / placeholder
 
-    /// A placeholder snapshot the Watch can render before the iPhone has
-    /// pushed real data. Keeps the layout from collapsing and helps designers
-    /// preview the UI in Xcode without a live phone.
-    static func placeholder() -> WatchSnapshot {
+    /// A neutral, EMPTY snapshot. Used as the initial value of the Watch's
+    /// observable state so the SwiftUI views have something to render before
+    /// the iPhone connects, and as the SwiftUI #Preview source.
+    ///
+    /// **No fake content.** Real users would otherwise see invented friends,
+    /// mentor messages, and habits during the connection window — exactly
+    /// the impression we want to avoid. The root view checks
+    /// `WatchSession.hasReceivedRealData` and shows a "connecting" state
+    /// until the first real snapshot arrives, so this empty payload should
+    /// never reach the user's screen in practice.
+    static func empty() -> WatchSnapshot {
+        WatchSnapshot(
+            generatedAt: Date(),
+            todayKey: WatchDayKey.dayKey(for: Date()),
+            weekdayShort: WatchDayKey.weekdayShort(for: Date()),
+            timeOfDay: WatchDayKey.timeOfDay(for: Date()),
+            pendingHabits: [],
+            completedHabits: [],
+            metrics: .init(
+                doneToday: 0, totalToday: 0,
+                currentStreak: 0, bestStreak: 0,
+                level: 1, levelName: "", xp: 0, xpForNextLevel: 0,
+                nextLevelProgress: 0, leaderboardRank: 0, freezesAvailable: 0
+            ),
+            leaderboard: [],
+            calendarHeatmap: [:],
+            calendarMonthLabel: WatchDayKey.monthLabel(for: Date()),
+            account: .init(
+                displayName: "",
+                handle: "",
+                avatarInitial: "",
+                healthKitOn: false,
+                notificationsOn: false
+            ),
+            mentorMessages: nil
+        )
+    }
+
+    /// Sample snapshot for SwiftUI #Preview blocks ONLY. Keeps the design
+    /// inspectable in Xcode without leaking dummy values into shipped builds.
+    /// Wrapped in `#if DEBUG` so the linker can't accidentally pull this into
+    /// a release build.
+    #if DEBUG
+    static func previewSample() -> WatchSnapshot {
         let today = WatchDayKey.dayKey(for: Date())
         return WatchSnapshot(
             generatedAt: Date(),
@@ -116,10 +156,6 @@ struct WatchSnapshot: Codable, Equatable {
                       progress: 0.75, unitsLogged: 6, unitsTarget: 8,
                       unitsLabel: "CUPS", isCompleted: false, sourceLabel: "",
                       canonicalKey: "water"),
-                .init(id: "2", title: "Move 30 min", emoji: "🏃", kind: .healthKit,
-                      progress: 1.0, unitsLogged: 42, unitsTarget: 30,
-                      unitsLabel: "MIN", isCompleted: false, sourceLabel: "APPLE HEALTH",
-                      canonicalKey: "run"),
                 .init(id: "4", title: "Read 20m", emoji: "📚", kind: .manual,
                       progress: 0.0, unitsLogged: 0, unitsTarget: 0,
                       unitsLabel: "", isCompleted: false, sourceLabel: "",
@@ -132,7 +168,7 @@ struct WatchSnapshot: Codable, Equatable {
                       canonicalKey: "sleep"),
             ],
             metrics: .init(
-                doneToday: 4, totalToday: 7,
+                doneToday: 1, totalToday: 3,
                 currentStreak: 12, bestStreak: 23,
                 level: 7, levelName: "Consistent", xp: 4120, xpForNextLevel: 6000,
                 nextLevelProgress: 0.62, leaderboardRank: 2, freezesAvailable: 3
@@ -141,11 +177,9 @@ struct WatchSnapshot: Codable, Equatable {
                 .init(rank: 1, displayName: "Aanya", score: 4280, isCurrentUser: false),
                 .init(rank: 2, displayName: "You",   score: 4120, isCurrentUser: true),
                 .init(rank: 3, displayName: "Rohan", score: 3960, isCurrentUser: false),
-                .init(rank: 4, displayName: "Kai",   score: 3450, isCurrentUser: false),
-                .init(rank: 5, displayName: "Mira",  score: 3210, isCurrentUser: false),
             ],
-            calendarHeatmap: Self.placeholderHeatmap(todayKey: today),
-            calendarMonthLabel: Self.monthLabel(for: Date()),
+            calendarHeatmap: [:],
+            calendarMonthLabel: WatchDayKey.monthLabel(for: Date()),
             account: .init(
                 displayName: "Jashan",
                 handle: "@jashan",
@@ -156,43 +190,11 @@ struct WatchSnapshot: Codable, Equatable {
             mentorMessages: [
                 .init(messageId: "m1", origin: .mentor, senderName: "Aanya",
                       preview: "Proud of the streak. Keep it up tomorrow morning.",
-                      relativeTime: "12m", isUnread: true),
-                .init(messageId: "m2", origin: .me, senderName: "You",
-                      preview: "Thanks — leg day was brutal but I logged it.",
-                      relativeTime: "1h", isUnread: false),
-                .init(messageId: "m3", origin: .mentor, senderName: "Aanya",
-                      preview: "Did you finish your workout? Checking in 👀",
-                      relativeTime: "yest", isUnread: false),
-                .init(messageId: "m4", origin: .mentor, senderName: "Aanya",
-                      preview: "New plan posted in the circle — take a look.",
-                      relativeTime: "2d", isUnread: false),
+                      relativeTime: "12m", isUnread: true)
             ]
         )
     }
-
-    private static func placeholderHeatmap(todayKey: String) -> [String: Double] {
-        // Build a simple gradient over the past month so the calendar tab has
-        // realistic-looking data even without the phone connected.
-        var out: [String: Double] = [:]
-        let calendar = Calendar.current
-        guard let today = WatchDayKey.date(from: todayKey) else { return out }
-        guard let monthStart = calendar.dateInterval(of: .month, for: today)?.start else { return out }
-        let dayCount = calendar.range(of: .day, in: .month, for: today)?.count ?? 30
-        for offset in 0..<dayCount {
-            guard let date = calendar.date(byAdding: .day, value: offset, to: monthStart) else { continue }
-            let key = WatchDayKey.dayKey(for: date)
-            // Most days near 1.0; salt with a deterministic fluctuation.
-            let intensity = 0.55 + 0.45 * Double((offset * 7 + 3) % 9) / 9.0
-            out[key] = min(1.0, intensity)
-        }
-        return out
-    }
-
-    private static func monthLabel(for date: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "LLL"
-        return f.string(from: date).uppercased()
-    }
+    #endif
 }
 
 // MARK: - Lightweight day-key formatter
@@ -218,6 +220,28 @@ enum WatchDayKey {
     static func date(from key: String) -> Date? {
         formatter.date(from: key)
     }
+
+    /// "WED" / "THU" — caps so the watch never has to format on render.
+    static func weekdayShort(for date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        return f.string(from: date).uppercased()
+    }
+
+    /// "9:41" — locale-respecting short-style time.
+    static func timeOfDay(for date: Date) -> String {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f.string(from: date)
+    }
+
+    /// "APR" / "MAY" — three-letter month label.
+    static func monthLabel(for date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "LLL"
+        return f.string(from: date).uppercased()
+    }
 }
 
 // MARK: - Watch → iPhone messages
@@ -228,10 +252,12 @@ enum WatchMessageKey {
     static let action      = "action"
     static let habitId     = "habitId"
     static let delta       = "delta"
+    static let title       = "title"     // payload for createHabit
 }
 
 enum WatchMessageAction {
     static let logHabit    = "logHabit"      // increment a manual habit's count by `delta`
     static let toggleHabit = "toggleHabit"   // flip a binary manual habit done/not-done
     static let requestSnapshot = "requestSnapshot"  // Watch asks for a fresh push
+    static let createHabit = "createHabit"   // dictation/Scribble entry → "title" arg → iPhone inserts SwiftData row
 }

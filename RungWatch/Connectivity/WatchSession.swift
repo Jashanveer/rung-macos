@@ -14,9 +14,10 @@ final class WatchSession: NSObject, ObservableObject {
 
     static let shared = WatchSession()
 
-    /// Latest snapshot the iPhone pushed. Starts at the placeholder so the
-    /// UI has something to render before the first message arrives.
-    @Published private(set) var snapshot: WatchSnapshot = .placeholder()
+    /// Latest snapshot the iPhone pushed. Starts EMPTY (no fake friends or
+    /// messages) — the root view checks `hasReceivedRealData` and shows a
+    /// "connecting" UI until the iPhone delivers a real payload.
+    @Published private(set) var snapshot: WatchSnapshot = .empty()
 
     /// `true` once we've received at least one real snapshot from the phone.
     /// UI uses this to dim "stale" placeholder data so users know the phone
@@ -35,6 +36,19 @@ final class WatchSession: NSObject, ObservableObject {
         session.delegate = self
         session.activate()
     }
+
+    #if DEBUG
+    /// Build a fully-loaded session for SwiftUI #Previews without touching
+    /// `WCSession`. Production code never calls this — `shared` is the only
+    /// instance that lives in a real watch process.
+    static func preview(hasRealData: Bool, snapshot: WatchSnapshot = .empty()) -> WatchSession {
+        let s = WatchSession()
+        s.snapshot = snapshot
+        s.hasReceivedRealData = hasRealData
+        s.isReachable = hasRealData
+        return s
+    }
+    #endif
 
     // MARK: - Outbound messages
 
@@ -112,10 +126,23 @@ final class WatchSession: NSObject, ObservableObject {
     }
 
     /// Ask the iPhone to push a fresh snapshot — used on first launch so the
-    /// Watch isn't stuck on `placeholder()` until the user does something on
-    /// the phone.
+    /// Watch isn't stuck on the empty initial state until the user does
+    /// something on the phone.
     func requestSnapshot() {
         send([WatchMessageKey.action: WatchMessageAction.requestSnapshot])
+    }
+
+    /// Quick-add a habit from the watch (dictation / Scribble entry on the
+    /// Habits tab). The iPhone owns SwiftData, so we send the title across
+    /// and let it create the row + flush to backend; the next snapshot
+    /// re-broadcast lands the new habit in our pending list.
+    func createHabit(title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        send([
+            WatchMessageKey.action: WatchMessageAction.createHabit,
+            WatchMessageKey.title: trimmed
+        ])
     }
 
     private func send(_ payload: [String: Any]) {

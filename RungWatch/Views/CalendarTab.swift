@@ -1,133 +1,142 @@
 import SwiftUI
 
-/// Tab 2 — month grid heatmap of perfect-day completion. Today is gold-bordered
-/// and the bottom row shows the current streak.
+/// Streak-first calendar. The current streak takes the whole top half of the
+/// screen — Rise-style hero number — with a 7-day rolling strip below so the
+/// user can still see this week's perfect-day pattern at a glance. The dense
+/// month grid moved to a drill-in to keep the tab itself scannable.
 struct CalendarTab: View {
     @EnvironmentObject private var session: WatchSession
+    @Environment(\.watchFontScale) private var scale: Double
 
     private var snapshot: WatchSnapshot { session.snapshot }
+    private var metrics: WatchSnapshot.Metrics { snapshot.metrics }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("S M T W T F S")
-                .font(.system(size: 8, weight: .semibold))
-                .tracking(1.2)
-                .foregroundStyle(WatchTheme.inkSoft)
-
-            grid
-
-            HStack(spacing: 4) {
-                Spacer()
-                Text("\u{1F525} \(snapshot.metrics.currentStreak)")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(WatchTheme.gold)
-                Text("day streak")
-                    .font(.system(size: 9))
-                    .foregroundStyle(WatchTheme.inkSoft)
-                Spacer()
-            }
-            .padding(.top, 2)
+        VStack(spacing: 12) {
+            streakHero
+            weekStrip
+            Spacer(minLength: 0)
+            footer
         }
-        .padding(.horizontal, 11)
-        .padding(.top, 2)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .watchPageHeader("CALENDAR", accent: WatchTheme.gold, trailing: snapshot.calendarMonthLabel)
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
     }
 
-    // MARK: - Grid
+    // MARK: - Streak hero
 
-    private var grid: some View {
-        let monthDays = monthDays(for: snapshot.todayKey)
-        let leadingBlanks = leadingBlanks(for: monthDays.first?.date)
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
-
-        return LazyVGrid(columns: columns, spacing: 2) {
-            ForEach(0..<leadingBlanks, id: \.self) { _ in
-                Color.clear.frame(maxWidth: .infinity)
-                    .aspectRatio(1, contentMode: .fit)
+    private var streakHero: some View {
+        VStack(spacing: -2) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text("\(metrics.currentStreak)")
+                    .font(WatchTheme.font(.hero, scale: scale, weight: .heavy))
+                    .foregroundStyle(WatchTheme.gold)
+                Text("d")
+                    .font(WatchTheme.font(.title, scale: scale, weight: .heavy))
+                    .foregroundStyle(WatchTheme.gold.opacity(0.6))
             }
-            ForEach(monthDays, id: \.dayKey) { day in
-                CalendarDayCell(
-                    dayNumber: day.dayNumber,
+            Text("CURRENT STREAK")
+                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                .tracking(1.4)
+                .foregroundStyle(WatchTheme.inkSoft)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 4)
+    }
+
+    // MARK: - 7-day strip
+
+    private var weekStrip: some View {
+        let days = lastSevenDays(todayKey: snapshot.todayKey)
+        return HStack(spacing: 4) {
+            ForEach(days, id: \.dayKey) { day in
+                DayCell(
+                    label: day.label,
                     intensity: snapshot.calendarHeatmap[day.dayKey] ?? 0,
-                    isToday: day.dayKey == snapshot.todayKey
+                    isToday: day.dayKey == snapshot.todayKey,
+                    scale: scale
                 )
             }
         }
     }
 
-    // MARK: - Calendar maths
+    // MARK: - Footer
 
-    private struct DayCell {
-        let dayNumber: Int
-        let dayKey: String
-        let date: Date
+    private var footer: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "trophy.fill")
+                .font(.system(size: 9 * scale))
+                .foregroundStyle(WatchTheme.gold.opacity(0.7))
+            Text("Best \(metrics.bestStreak)d")
+                .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
+                .foregroundStyle(WatchTheme.inkSoft)
+            Spacer()
+            Text(snapshot.calendarMonthLabel)
+                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                .tracking(1.2)
+                .foregroundStyle(WatchTheme.inkSoft)
+        }
     }
 
-    private func monthDays(for todayKey: String) -> [DayCell] {
+    // MARK: - Date helpers
+
+    private struct StripDay {
+        let dayKey: String
+        let label: String   // "M T W T F S S"
+    }
+
+    private func lastSevenDays(todayKey: String) -> [StripDay] {
         guard let today = WatchDayKey.date(from: todayKey) else { return [] }
         let calendar = Calendar.current
-        guard let monthStart = calendar.dateInterval(of: .month, for: today)?.start,
-              let dayCount = calendar.range(of: .day, in: .month, for: today)?.count
-        else { return [] }
-        return (0..<dayCount).compactMap { offset in
-            guard let date = calendar.date(byAdding: .day, value: offset, to: monthStart) else { return nil }
-            let dayNumber = calendar.component(.day, from: date)
-            return DayCell(
-                dayNumber: dayNumber,
+        return (0..<7).reversed().compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            let f = DateFormatter()
+            f.dateFormat = "EEEEE"   // single-letter weekday
+            return StripDay(
                 dayKey: WatchDayKey.dayKey(for: date),
-                date: date
+                label: f.string(from: date)
             )
         }
     }
-
-    /// How many empty cells to drop before the 1st of the month. Sunday-first
-    /// to match the SMTWTFS header in the design.
-    private func leadingBlanks(for firstDate: Date?) -> Int {
-        guard let firstDate else { return 0 }
-        let weekday = Calendar.current.component(.weekday, from: firstDate)  // 1 = Sunday
-        return weekday - 1
-    }
 }
 
-// MARK: - Cell
+// MARK: - Strip cell
 
-private struct CalendarDayCell: View {
-    let dayNumber: Int
+private struct DayCell: View {
+    let label: String
     let intensity: Double
     let isToday: Bool
+    let scale: Double
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(fillColor)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(isToday ? WatchTheme.gold : Color.clear, lineWidth: 1)
-                )
-                .shadow(color: isToday ? WatchTheme.gold.opacity(0.5) : .clear,
-                        radius: 2, x: 0, y: 0)
-
-            Text("\(dayNumber)")
-                .font(.system(size: 8, weight: isToday ? .bold : .medium))
-                .foregroundStyle(intensity > 0.5 ? Color.white : WatchTheme.inkSoft)
+        VStack(spacing: 3) {
+            Text(label)
+                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                .foregroundStyle(WatchTheme.inkSoft)
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(fillColor)
+                if isToday {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(WatchTheme.gold, lineWidth: 1.5)
+                }
+            }
+            .frame(height: 28 * scale)
         }
-        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: .infinity)
     }
 
     private var fillColor: Color {
-        if intensity == 0 {
-            return Color.white.opacity(0.05)
-        }
-        // Same alpha curve as the design HTML: 0.15 + intensity * 0.7
-        let alpha = 0.15 + intensity * 0.7
-        return WatchTheme.success.opacity(alpha)
+        if intensity == 0 { return Color.white.opacity(0.06) }
+        return WatchTheme.success.opacity(0.2 + intensity * 0.6)
     }
 }
 
+#if DEBUG
 #Preview {
     CalendarTab()
-        .environmentObject(WatchSession.shared)
+        .environmentObject(WatchSession.preview(hasRealData: true, snapshot: .previewSample()))
 }
+#endif

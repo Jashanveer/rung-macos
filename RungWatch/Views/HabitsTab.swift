@@ -1,97 +1,150 @@
 import SwiftUI
 import WatchKit
 
-/// Tab 1 — homepage. Shows pending habits as a vertical list.
-/// HealthKit-linked rows display a ♥ AUTO badge instead of a hollow circle
-/// and are read-only (tapping drills into a HealthDetailView).
+/// Hero "DONE / TOTAL" with a circular progress ring filling most of the
+/// screen, the next habit waiting under it, and a microphone button to add
+/// a habit by voice. Modeled on the Activity-app and Workout-app aesthetic
+/// — one big number, one supporting metric, no chrome.
 struct HabitsTab: View {
     @EnvironmentObject private var session: WatchSession
+    @Environment(\.watchFontScale) private var scale: Double
+
+    @State private var voiceSheetShown = false
+    @State private var voiceText: String = ""
 
     private var snapshot: WatchSnapshot { session.snapshot }
-    private var allHabits: [WatchSnapshot.WatchHabit] {
-        snapshot.pendingHabits + snapshot.completedHabits
+    private var nextHabit: WatchSnapshot.WatchHabit? {
+        snapshot.pendingHabits.first
+    }
+    private var ringFraction: Double {
+        guard snapshot.metrics.totalToday > 0 else { return 0 }
+        return Double(snapshot.metrics.doneToday) / Double(snapshot.metrics.totalToday)
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                header
-                progressBar
-                habitsList
+        ZStack(alignment: .bottomTrailing) {
+            ScrollView {
+                VStack(spacing: 10) {
+                    hero
+                    if let nextHabit {
+                        HabitNextUpRow(habit: nextHabit)
+                    } else if !snapshot.completedHabits.isEmpty {
+                        Text("All caught up.")
+                            .font(WatchTheme.font(.body, scale: scale, weight: .medium))
+                            .foregroundStyle(WatchTheme.inkSoft)
+                            .padding(.top, 4)
+                    } else {
+                        Text("No habits yet.\nTap the mic to add one.")
+                            .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
+                            .foregroundStyle(WatchTheme.inkSoft)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 4)
+                    }
+
+                    if snapshot.pendingHabits.count > 1 || !snapshot.completedHabits.isEmpty {
+                        rest
+                            .padding(.top, 4)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+                .padding(.bottom, 28)
             }
-            .padding(.horizontal, 11)
-            .padding(.top, 2)
-            .padding(.bottom, 8)
+
+            voiceButton
+                .padding(.bottom, 8)
+                .padding(.trailing, 6)
         }
-        .watchPageHeader("HABITS", accent: WatchTheme.success, trailing: snapshot.timeOfDay)
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
+        .sheet(isPresented: $voiceSheetShown) {
+            VoiceAddSheet(text: $voiceText) { final in
+                let trimmed = final.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                session.createHabit(title: trimmed)
+                voiceText = ""
+            }
+        }
     }
 
-    // MARK: - Header
+    // MARK: - Hero
 
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            HStack(alignment: .lastTextBaseline, spacing: 0) {
-                Text("\(snapshot.metrics.doneToday)")
-                    .font(.system(size: 16, weight: .heavy, design: .rounded))
-                    .foregroundStyle(WatchTheme.ink)
-                Text("/\(snapshot.metrics.totalToday)")
-                    .font(.system(size: 10, weight: .medium))
+    private var hero: some View {
+        ZStack {
+            // Track + progress ring fills the watch face.
+            Circle()
+                .stroke(Color.white.opacity(0.07), lineWidth: 7)
+            Circle()
+                .trim(from: 0, to: ringFraction)
+                .stroke(
+                    WatchTheme.progressGradient,
+                    style: StrokeStyle(lineWidth: 7, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: ringFraction)
+
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text("\(snapshot.metrics.doneToday)")
+                        .font(WatchTheme.font(.hero, scale: scale, weight: .heavy))
+                        .foregroundStyle(WatchTheme.ink)
+                    Text("/\(snapshot.metrics.totalToday)")
+                        .font(WatchTheme.font(.title, scale: scale, weight: .semibold))
+                        .foregroundStyle(WatchTheme.inkSoft)
+                }
+                Text("TODAY")
+                    .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                    .tracking(1.6)
                     .foregroundStyle(WatchTheme.inkSoft)
+                    .padding(.top, -2)
             }
-            Text(snapshot.weekdayShort)
-                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                .tracking(0.9)
-                .foregroundStyle(WatchTheme.gold)
-            Spacer()
-            if snapshot.metrics.currentStreak > 0 {
-                Text("\u{1F525}\(snapshot.metrics.currentStreak)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(WatchTheme.gold)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 130 * scale)
+        .padding(.top, 2)
+    }
+
+    // MARK: - Rest of habits (collapsed list under the hero)
+
+    private var rest: some View {
+        let remaining = Array(snapshot.pendingHabits.dropFirst())
+        let completed = snapshot.completedHabits
+        return VStack(spacing: 4) {
+            ForEach(remaining) { habit in
+                CompactHabitRow(habit: habit)
+            }
+            ForEach(completed) { habit in
+                CompactHabitRow(habit: habit)
             }
         }
     }
 
-    private var progressBar: some View {
-        let p = snapshot.metrics.totalToday == 0
-            ? 0.0
-            : Double(snapshot.metrics.doneToday) / Double(snapshot.metrics.totalToday)
-        return GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.white.opacity(0.08))
-                Capsule()
-                    .fill(WatchTheme.progressGradient)
-                    .frame(width: max(0, proxy.size.width * p))
-            }
-        }
-        .frame(height: 2.5)
-    }
+    // MARK: - Voice button
 
-    // MARK: - Habits
-
-    private var habitsList: some View {
-        VStack(spacing: 2.5) {
-            ForEach(allHabits) { habit in
-                NavigationLinkOrButton(habit: habit)
+    private var voiceButton: some View {
+        Button {
+            voiceText = ""
+            voiceSheetShown = true
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(WatchTheme.brandGradient)
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 13 * scale, weight: .bold))
+                    .foregroundStyle(.white)
             }
+            .frame(width: 32 * scale, height: 32 * scale)
+            .shadow(color: WatchTheme.accent.opacity(0.5), radius: 6, y: 2)
         }
+        .buttonStyle(.plain)
     }
 }
 
-// MARK: - Row + Drill-in
+// MARK: - Next-up (the primary actionable row, big tap target)
 
-/// Wraps each habit row in either a NavigationLink (drill-in) or a Button
-/// (toggle for binary manuals). Auto-verified rows can still drill in to
-/// see the synced number, but their tap behaviour never mutates state.
-///
-/// Binary manual habits (target == 0) flip done/not-done with a single tap
-/// for live-feel parity with iPhone — the optimistic update inside
-/// `WatchSession.toggleHabit` flips the row instantly and the iPhone's
-/// re-broadcast confirms within a few hundred milliseconds. Counted manual
-/// habits (water 6/8 etc.) still drill into the crown-rotation detail view.
-private struct NavigationLinkOrButton: View {
+private struct HabitNextUpRow: View {
     @EnvironmentObject private var session: WatchSession
+    @Environment(\.watchFontScale) private var scale: Double
     let habit: WatchSnapshot.WatchHabit
 
     var body: some View {
@@ -100,132 +153,200 @@ private struct NavigationLinkOrButton: View {
             NavigationLink {
                 HealthDetailView(habit: habit)
             } label: {
-                HabitRow(habit: habit)
+                rowContent
             }
             .buttonStyle(.plain)
         case .manual where habit.unitsTarget == 0:
             Button {
-                WKInterfaceDevice.current().play(habit.isCompleted ? .click : .success)
+                WKInterfaceDevice.current().play(.success)
                 session.toggleHabit(id: habit.id)
             } label: {
-                HabitRow(habit: habit)
+                rowContent
             }
             .buttonStyle(.plain)
         case .manual:
             NavigationLink {
                 HabitDetailView(habit: habit)
             } label: {
-                HabitRow(habit: habit)
+                rowContent
             }
             .buttonStyle(.plain)
         }
     }
+
+    private var rowContent: some View {
+        HStack(spacing: 10) {
+            Text(habit.emoji.isEmpty ? "•" : habit.emoji)
+                .font(.system(size: 22 * scale))
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(habit.title)
+                    .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
+                    .foregroundStyle(WatchTheme.ink)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
+                    .foregroundStyle(WatchTheme.inkSoft)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            trailing
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(rowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var subtitle: String {
+        if habit.kind == .healthKit { return "APPLE HEALTH · AUTO" }
+        if habit.unitsTarget > 0 { return "\(habit.unitsLogged) of \(habit.unitsTarget) \(habit.unitsLabel)" }
+        return "Tap to mark done"
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        switch habit.kind {
+        case .healthKit:
+            Image(systemName: "heart.circle.fill")
+                .font(.system(size: 20 * scale))
+                .foregroundStyle(WatchTheme.accent)
+        case .manual where habit.unitsTarget == 0:
+            Image(systemName: habit.isCompleted ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 22 * scale))
+                .foregroundStyle(habit.isCompleted ? WatchTheme.success : WatchTheme.inkSoft)
+        case .manual:
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11 * scale, weight: .bold))
+                .foregroundStyle(WatchTheme.inkSoft)
+        }
+    }
+
+    private var rowBackground: some View {
+        LinearGradient(
+            colors: [Color.white.opacity(0.07), Color.white.opacity(0.025)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+        )
+    }
 }
 
-private struct HabitRow: View {
+// MARK: - Compact row (everything after the next-up)
+
+private struct CompactHabitRow: View {
+    @EnvironmentObject private var session: WatchSession
+    @Environment(\.watchFontScale) private var scale: Double
     let habit: WatchSnapshot.WatchHabit
 
     var body: some View {
-        HStack(spacing: 7) {
-            checkBadge
-
-            Text(habit.title)
-                .font(.system(size: 10, weight: .regular))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .strikethrough(habit.isCompleted, color: .white.opacity(0.7))
-                .foregroundStyle(habit.isCompleted ? Color.white.opacity(0.7) : WatchTheme.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            trailingLabel
+        Button {
+            handleTap()
+        } label: {
+            HStack(spacing: 8) {
+                checkIcon
+                Text(habit.title)
+                    .font(WatchTheme.font(.body, scale: scale, weight: .regular))
+                    .foregroundStyle(habit.isCompleted ? Color.white.opacity(0.6) : WatchTheme.ink)
+                    .strikethrough(habit.isCompleted, color: .white.opacity(0.5))
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 6)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .buttonStyle(.plain)
     }
 
-    /// Hollow circle for incomplete manual rows; filled green check for
-    /// completed; outlined accent ♥ for HealthKit-linked rows.
-    @ViewBuilder
-    private var checkBadge: some View {
-        switch (habit.kind, habit.isCompleted) {
-        case (.healthKit, _):
-            ZStack {
-                Circle()
-                    .fill(WatchTheme.accent.opacity(0.2))
-                Circle()
-                    .stroke(WatchTheme.accent, lineWidth: 1.5)
-                Text("\u{2665}")  // ♥
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(WatchTheme.accent)
-            }
-            .frame(width: 14, height: 14)
-        case (.manual, true):
-            ZStack {
-                Circle().fill(WatchTheme.success)
-                Image(systemName: "checkmark")
-                    .font(.system(size: 7.5, weight: .heavy))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 14, height: 14)
-        case (.manual, false):
-            Circle()
-                .stroke(Color.white.opacity(0.28), lineWidth: 1.5)
-                .frame(width: 14, height: 14)
-        }
-    }
-
-    @ViewBuilder
-    private var trailingLabel: some View {
+    private func handleTap() {
+        // Mirror the same action behavior as the next-up row but inline so
+        // every row in the secondary list is just one tap away from done.
         switch habit.kind {
         case .healthKit:
-            Text("HEALTH")
-                .font(.system(size: 7.5, weight: .semibold))
-                .tracking(0.5)
-                .foregroundStyle(WatchTheme.accent)
+            return    // healthKit rows don't toggle; user can still drill in via swipe
+        case .manual where habit.unitsTarget == 0:
+            WKInterfaceDevice.current().play(habit.isCompleted ? .click : .success)
+            session.toggleHabit(id: habit.id)
         case .manual:
-            if habit.unitsTarget > 0 {
-                Text("\(habit.unitsLogged)/\(habit.unitsTarget)")
-                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(WatchTheme.inkSoft)
-            } else {
-                EmptyView()
-            }
+            return    // counted habits live in the next-up slot for crown logging
         }
     }
 
-    /// Gold-tinted "focused" background for the first row in the design mock —
-    /// we mirror that on whichever pending row the user is most likely to tap
-    /// next (first incomplete manual habit). Falls back to the default glass
-    /// look for everything else.
     @ViewBuilder
-    private var rowBackground: some View {
-        if isFocused {
-            LinearGradient(
-                colors: [WatchTheme.gold.opacity(0.16), WatchTheme.gold.opacity(0.06)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(WatchTheme.gold.opacity(0.45), lineWidth: 0.5)
-            )
-        } else {
-            Color.clear
+    private var checkIcon: some View {
+        switch (habit.kind, habit.isCompleted) {
+        case (.healthKit, _):
+            Image(systemName: "heart.fill")
+                .font(.system(size: 11 * scale))
+                .foregroundStyle(WatchTheme.accent)
+                .frame(width: 16, height: 16)
+        case (.manual, true):
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14 * scale))
+                .foregroundStyle(WatchTheme.success)
+                .frame(width: 16, height: 16)
+        case (.manual, false):
+            Image(systemName: "circle")
+                .font(.system(size: 14 * scale))
+                .foregroundStyle(WatchTheme.inkSoft)
+                .frame(width: 16, height: 16)
         }
-    }
-
-    /// Marks a row as the "next thing to do" so it gets the gold focus tint.
-    /// Conservative: only the first uncompleted manual habit qualifies.
-    private var isFocused: Bool {
-        habit.kind == .manual && !habit.isCompleted && habit.progress > 0 && habit.progress < 1
     }
 }
 
+// MARK: - Voice add-habit sheet
+
+private struct VoiceAddSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.watchFontScale) private var scale: Double
+    @Binding var text: String
+    var onSubmit: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("New habit")
+                .font(WatchTheme.font(.caption, scale: scale, weight: .heavy))
+                .tracking(1.4)
+                .foregroundStyle(WatchTheme.inkSoft)
+            // watchOS auto-presents Dictation / Scribble / suggestions when
+            // a TextField becomes first responder, so the mic icon on the
+            // input chooser is the actual voice entry point.
+            TextField("Speak or scribble", text: $text)
+                .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .submitLabel(.done)
+                .onSubmit {
+                    onSubmit(text)
+                    dismiss()
+                }
+            Button("Add") {
+                onSubmit(text)
+                dismiss()
+            }
+            .font(WatchTheme.font(.body, scale: scale, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(WatchTheme.brandGradient)
+            )
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .containerBackground(WatchTheme.bg.gradient, for: .navigation)
+    }
+}
+
+#if DEBUG
 #Preview {
     NavigationStack {
         HabitsTab()
-            .environmentObject(WatchSession.shared)
+            .environmentObject(WatchSession.preview(hasRealData: true, snapshot: .previewSample()))
     }
 }
+#endif

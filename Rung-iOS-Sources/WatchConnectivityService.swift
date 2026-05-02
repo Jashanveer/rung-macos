@@ -411,9 +411,29 @@ final class WatchConnectivityService: NSObject {
             forcePush()
         case WatchMessageAction.logHabit, WatchMessageAction.toggleHabit:
             applyHabitMutation(action: action, message: message)
+        case WatchMessageAction.createHabit:
+            applyCreateHabit(message: message)
         default:
             return
         }
+    }
+
+    /// Insert a SwiftData habit from a watch-originated voice/Scribble entry.
+    /// Mirrors what `AddHabitBar` does on the iPhone for a freshly-typed
+    /// title — no canonical match, no verification metadata, just a plain
+    /// self-report habit. `staleResourceTick` triggers ContentView's sync
+    /// loop, which uploads the new row to the backend on its next pass.
+    private func applyCreateHabit(message: [String: Any]) {
+        guard let container = modelContainer,
+              let title = (message[WatchMessageKey.title] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else { return }
+        let context = ModelContext(container)
+        let habit = Habit(title: title)
+        context.insert(habit)
+        try? context.save()
+        forcePush()
+        backend?.staleResourceTick &+= 1
     }
 
     private func applyHabitMutation(action: String, message: [String: Any]) {

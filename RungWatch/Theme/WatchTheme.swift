@@ -1,5 +1,38 @@
 import SwiftUI
 
+/// User-controlled font scale, persisted via `@AppStorage` on the watch.
+/// Three discrete steps so users can pick from Account → Display.
+/// `1.0` = the default ramp; `0.9` for compact watches, `1.15` for users
+/// who want chunkier numbers — Apple Watch favors big, glanceable text and
+/// most of our default sizes are deliberately on the smaller end.
+enum WatchFontScale: Double, CaseIterable, Identifiable {
+    case compact = 0.9
+    case `default` = 1.0
+    case large = 1.15
+
+    var id: Double { rawValue }
+    var label: String {
+        switch self {
+        case .compact:  return "Compact"
+        case .default:  return "Default"
+        case .large:    return "Large"
+        }
+    }
+}
+
+/// Read the user's stored font scale anywhere in the watch app via
+/// `@Environment(\.watchFontScale)` after the root view injects it.
+private struct WatchFontScaleKey: EnvironmentKey {
+    static let defaultValue: Double = 1.0
+}
+
+extension EnvironmentValues {
+    var watchFontScale: Double {
+        get { self[WatchFontScaleKey.self] }
+        set { self[WatchFontScaleKey.self] = newValue }
+    }
+}
+
 /// Watch-side port of `CleanShotTheme` from the iOS/macOS Rung app, with
 /// hex literals matching the Apple Watch design HTML 1:1. Watch screens are
 /// always dark — there's no light-mode fallback so the constants are flat.
@@ -42,6 +75,32 @@ enum WatchTheme {
         startPoint: .leading,
         endPoint: .trailing
     )
+
+    /// Curated typography ramp. Use these instead of `Font.system(size:)` so
+    /// the user's chosen font scale lands consistently across every screen.
+    /// Apple Watch HIG calls out that body should sit around 17pt — our old
+    /// 9-10pt sizes were design-mock-faithful but felt too dense in real use.
+    enum FontRole {
+        case hero        // 38pt — the page's headline number ("4 / 7", "12d")
+        case heroSmall   // 30pt — secondary hero (level number, top podium)
+        case title       // 18pt — section titles inside a card
+        case body        // 14pt — primary list rows
+        case caption     // 11pt — meta lines (timestamps, day labels)
+        case label       // 9pt   — uppercase tracking labels ("DONE", "APR")
+    }
+
+    static func font(_ role: FontRole, scale: Double = 1.0, weight: Font.Weight = .semibold, design: Font.Design = .rounded) -> Font {
+        let baseSize: CGFloat
+        switch role {
+        case .hero:       baseSize = 38
+        case .heroSmall:  baseSize = 30
+        case .title:      baseSize = 18
+        case .body:       baseSize = 14
+        case .caption:    baseSize = 11
+        case .label:      baseSize = 9
+        }
+        return .system(size: baseSize * CGFloat(scale), weight: weight, design: design)
+    }
 }
 
 // MARK: - Hex helper

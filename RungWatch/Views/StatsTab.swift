@@ -1,51 +1,82 @@
 import SwiftUI
 
-/// Tab 3 — Level + XP bar + 4-stat grid (DONE / BEST / RANK / FREEZE).
+/// Stats tab — level number filling the screen with an XP progress ring,
+/// the level name underneath, and a single XP-to-next-level line. Apple
+/// Activity-app vibe: one big number, one secondary metric.
 struct StatsTab: View {
     @EnvironmentObject private var session: WatchSession
+    @Environment(\.watchFontScale) private var scale: Double
 
     private var metrics: WatchSnapshot.Metrics { session.snapshot.metrics }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            levelRow
-            xpBar
-            statGrid
+        VStack(spacing: 8) {
+            ringHero
+            Spacer(minLength: 0)
+            footer
         }
-        .padding(.horizontal, 11)
-        .padding(.top, 2)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
         .padding(.bottom, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .watchPageHeader("STATS", accent: WatchTheme.violet, trailing: metrics.levelName.uppercased())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
     }
 
-    // MARK: - Level row
+    private var ringHero: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.07), lineWidth: 7)
+            Circle()
+                .trim(from: 0, to: metrics.nextLevelProgress)
+                .stroke(WatchTheme.brandGradient,
+                        style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.spring(response: 0.5, dampingFraction: 0.8),
+                           value: metrics.nextLevelProgress)
 
-    private var levelRow: some View {
-        HStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .fill(WatchTheme.brandGradient)
+            VStack(spacing: -2) {
                 Text("\(metrics.level)")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 22, height: 22)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Level \(metrics.level)")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(WatchTheme.font(.hero, scale: scale, weight: .heavy))
                     .foregroundStyle(WatchTheme.ink)
-                Text("\(formattedXP) XP")
-                    .font(.system(size: 8.5))
-                    .foregroundStyle(WatchTheme.inkSoft)
+                if !metrics.levelName.isEmpty {
+                    Text(metrics.levelName.uppercased())
+                        .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                        .tracking(1.4)
+                        .foregroundStyle(WatchTheme.accent)
+                }
             }
-            Spacer()
-            Text("\u{1F525}\(metrics.currentStreak)")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(WatchTheme.gold)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: 130 * scale)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 14) {
+            chip(value: "\(formattedXP)", label: "XP", tint: WatchTheme.accent)
+            divider
+            chip(value: rankString, label: "RANK", tint: WatchTheme.gold)
+            divider
+            chip(value: "\(metrics.freezesAvailable)", label: "FREEZE", tint: WatchTheme.violet)
+        }
+    }
+
+    private func chip(value: String, label: String, tint: Color) -> some View {
+        VStack(spacing: 0) {
+            Text(value)
+                .font(WatchTheme.font(.body, scale: scale, weight: .bold))
+                .foregroundStyle(tint)
+            Text(label)
+                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                .tracking(1.2)
+                .foregroundStyle(WatchTheme.inkSoft)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .frame(width: 0.5, height: 22)
     }
 
     private var formattedXP: String {
@@ -54,63 +85,14 @@ struct StatsTab: View {
         return f.string(from: NSNumber(value: metrics.xp)) ?? "\(metrics.xp)"
     }
 
-    // MARK: - XP bar
-
-    private var xpBar: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.white.opacity(0.08))
-                Capsule()
-                    .fill(WatchTheme.progressGradient)
-                    .frame(width: max(0, proxy.size.width * metrics.nextLevelProgress))
-            }
-        }
-        .frame(height: 2.5)
-    }
-
-    // MARK: - Grid
-
-    private var statGrid: some View {
-        let columns = [GridItem(.flexible(), spacing: 3), GridItem(.flexible(), spacing: 3)]
-        return LazyVGrid(columns: columns, spacing: 3) {
-            StatTile(label: "DONE", value: "\(metrics.doneToday)", color: WatchTheme.success)
-            StatTile(label: "BEST", value: "\(metrics.bestStreak)", color: WatchTheme.gold)
-            StatTile(label: "RANK", value: rankString, color: WatchTheme.accent)
-            StatTile(label: "FREEZE", value: "\(metrics.freezesAvailable)", color: WatchTheme.violet)
-        }
-    }
-
     private var rankString: String {
         metrics.leaderboardRank > 0 ? "#\(metrics.leaderboardRank)" : "—"
     }
 }
 
-// MARK: - Tile
-
-private struct StatTile: View {
-    let label: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(label)
-                .font(.system(size: 7.5, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(WatchTheme.inkSoft)
-            Text(value)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(color)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .watchGlass(cornerRadius: 8)
-    }
-}
-
+#if DEBUG
 #Preview {
     StatsTab()
-        .environmentObject(WatchSession.shared)
+        .environmentObject(WatchSession.preview(hasRealData: true, snapshot: .previewSample()))
 }
+#endif

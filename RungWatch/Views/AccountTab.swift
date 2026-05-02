@@ -1,64 +1,121 @@
 import SwiftUI
 
-/// Tab 5 — Account / settings. Avatar, display name, @handle, then three
-/// glass rows for Health sync, Notifications, and "iPhone app" (chevron only,
-/// since the watch can't actually open the iPhone app — informational).
+/// Account / settings — avatar + display name as the hero, then a small
+/// settings list. Includes the watchOS-only **Display size** picker so
+/// users can grow every number on every screen if the default sizes feel
+/// too small.
 struct AccountTab: View {
     @EnvironmentObject private var session: WatchSession
+    @Environment(\.watchFontScale) private var scale: Double
+    @AppStorage("watchFontScaleRaw") private var fontScaleRaw: Double = WatchFontScale.default.rawValue
 
     private var account: WatchSnapshot.AccountInfo { session.snapshot.account }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            avatarRow
-            settingRows
+        ScrollView {
+            VStack(spacing: 12) {
+                avatarHero
+                fontScalePicker
+                settingRows
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
         }
-        .padding(.horizontal, 11)
-        .padding(.top, 2)
-        .padding(.bottom, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .watchPageHeader("ACCOUNT", accent: WatchTheme.violet, trailing: account.handle)
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
     }
 
-    private var avatarRow: some View {
-        HStack(spacing: 6) {
+    // MARK: - Avatar hero
+
+    private var avatarHero: some View {
+        VStack(spacing: 4) {
             ZStack {
-                Circle().fill(WatchTheme.brandGradient)
-                Text(account.avatarInitial)
-                    .font(.system(size: 11, weight: .bold))
+                Circle()
+                    .fill(WatchTheme.brandGradient)
+                Text(account.avatarInitial.isEmpty ? "·" : account.avatarInitial)
+                    .font(WatchTheme.font(.heroSmall, scale: scale, weight: .heavy))
                     .foregroundStyle(.white)
             }
-            .frame(width: 28, height: 28)
+            .frame(width: 54 * scale, height: 54 * scale)
+            .shadow(color: WatchTheme.accent.opacity(0.4), radius: 6, y: 2)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text(account.displayName)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(WatchTheme.ink)
+            Text(account.displayName.isEmpty ? "Rung" : account.displayName)
+                .font(WatchTheme.font(.title, scale: scale, weight: .bold))
+                .foregroundStyle(WatchTheme.ink)
+                .lineLimit(1)
+            if !account.handle.isEmpty {
                 Text(account.handle)
-                    .font(.system(size: 8.5))
+                    .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
                     .foregroundStyle(WatchTheme.inkSoft)
             }
-            Spacer()
+        }
+        .padding(.top, 6)
+    }
+
+    // MARK: - Font scale picker
+
+    private var fontScalePicker: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("DISPLAY SIZE")
+                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                .tracking(1.4)
+                .foregroundStyle(WatchTheme.inkSoft)
+                .padding(.leading, 4)
+
+            HStack(spacing: 4) {
+                ForEach(WatchFontScale.allCases) { option in
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            fontScaleRaw = option.rawValue
+                        }
+                    } label: {
+                        Text(option.label)
+                            .font(WatchTheme.font(.caption, scale: option.rawValue,
+                                                   weight: .semibold))
+                            .foregroundStyle(fontScaleRaw == option.rawValue
+                                              ? .white : WatchTheme.inkSoft)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(fontScaleRaw == option.rawValue
+                                          ? AnyShapeStyle(WatchTheme.brandGradient)
+                                          : AnyShapeStyle(Color.white.opacity(0.07)))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 
+    // MARK: - Settings list
+
     private var settingRows: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
             SettingRow(
-                icon: "\u{2665}",   // ♥
+                icon: "heart.fill",
+                tint: WatchTheme.danger,
                 title: "Health sync",
-                trailing: account.healthKitOn ? .onIndicator : .offIndicator
+                trailing: account.healthKitOn ? "ON" : "OFF",
+                trailingTint: account.healthKitOn ? WatchTheme.success : WatchTheme.inkSoft,
+                scale: scale
             )
             SettingRow(
-                icon: "\u{1F514}",  // 🔔
+                icon: "bell.fill",
+                tint: WatchTheme.warning,
                 title: "Notifications",
-                trailing: account.notificationsOn ? .onIndicator : .offIndicator
+                trailing: account.notificationsOn ? "ON" : "OFF",
+                trailingTint: account.notificationsOn ? WatchTheme.success : WatchTheme.inkSoft,
+                scale: scale
             )
             SettingRow(
-                icon: "\u{1F4F1}",  // 📱
+                icon: "iphone",
+                tint: WatchTheme.accent,
                 title: "iPhone app",
-                trailing: .chevron
+                trailing: "›",
+                trailingTint: WatchTheme.inkSoft,
+                scale: scale
             )
         }
     }
@@ -67,51 +124,46 @@ struct AccountTab: View {
 // MARK: - Row
 
 private struct SettingRow: View {
-    enum Trailing {
-        case onIndicator
-        case offIndicator
-        case chevron
-    }
-
     let icon: String
+    let tint: Color
     let title: String
-    let trailing: Trailing
+    let trailing: String
+    let trailingTint: Color
+    let scale: Double
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(icon)
-                .font(.system(size: 11))
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 12 * scale, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 18, height: 18)
             Text(title)
-                .font(.system(size: 10))
+                .font(WatchTheme.font(.body, scale: scale, weight: .medium))
                 .foregroundStyle(WatchTheme.ink)
             Spacer()
-            trailingView
+            Text(trailing)
+                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                .tracking(0.8)
+                .foregroundStyle(trailingTint)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .watchGlass()
-    }
-
-    @ViewBuilder
-    private var trailingView: some View {
-        switch trailing {
-        case .onIndicator:
-            Text("ON")
-                .font(.system(size: 8.5, weight: .semibold))
-                .foregroundStyle(WatchTheme.success)
-        case .offIndicator:
-            Text("OFF")
-                .font(.system(size: 8.5, weight: .semibold))
-                .foregroundStyle(WatchTheme.inkSoft)
-        case .chevron:
-            Text("\u{203A}")  // ›
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(WatchTheme.inkSoft)
-        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(LinearGradient(colors: [Color.white.opacity(0.06),
+                                              Color.white.opacity(0.02)],
+                                     startPoint: .top, endPoint: .bottom))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                )
+        )
     }
 }
 
+#if DEBUG
 #Preview {
     AccountTab()
-        .environmentObject(WatchSession.shared)
+        .environmentObject(WatchSession.preview(hasRealData: true, snapshot: .previewSample()))
 }
+#endif
