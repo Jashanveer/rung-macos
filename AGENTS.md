@@ -2,28 +2,35 @@
 
 ## Project Structure & Module Organization
 
-This repository contains a SwiftUI macOS app generated as an Xcode project. App source lives in `Rung/Rung/`, including `RungApp.swift`, `ContentView.swift`, `Habit.swift`, and `Assets.xcassets`. Unit tests live in `Rung/RungTests/` and use Swift Testing. UI tests live in `Rung/RungUITests/` and use XCTest/XCUIAutomation. Keep feature code close to the app target unless it becomes shared enough to justify a separate module.
+Multiplatform SwiftUI + SwiftData app — one `Rung.xcodeproj`, bundle id `jashanveer.Rung`, ships to both iOS (18+) and macOS (15+) App Stores.
+
+- `Rung/` — all shared cross-platform sources. Use `#if os(iOS)` / `#if os(macOS)` for platform-specific code within a file.
+- `Rung-iOS-Sources/` — iOS-only files (no macOS counterpart): `PhoneTabScaffold`, `ScreenTimeService`, `SocialAppsPickerSheet`, `StreakActivityAttributes`, `StreakActivityController`, plus Resources (iOS entitlements, Info.plist). Excluded from macOS build via `EXCLUDED_SOURCE_FILE_NAMES[sdk=macosx*]`.
+- `RungWidgets/` — widgets bundle (Live Activity widget under `RungWidgets/iOS/`).
+- `ScreenTimeMonitor/` — iOS DeviceActivity extension.
+- `RungShared/` — cross-target shared types.
+- `RungTests/`, `RungUITests/` — Swift Testing + XCTest.
 
 ## Build, Test, and Development Commands
 
-Use Xcode for the primary development loop:
-
 ```sh
 open Rung.xcodeproj
-```
 
-From the command line, build and test with Xcode's build system:
+# macOS
+xcodebuild -project Rung.xcodeproj -scheme Rung -destination 'platform=macOS' build
 
-```sh
-xcodebuild -project Rung.xcodeproj -scheme Rung build
+# iOS Simulator
+xcodebuild -project Rung.xcodeproj -scheme Rung -destination 'platform=iOS Simulator,name=iPhone 16' build
+
+# Tests (host)
 xcodebuild -project Rung.xcodeproj -scheme Rung test
 ```
 
-The build command compiles the app target. The test command runs the active test targets configured for the scheme. Prefer Xcode's Product > Run for local manual testing of the macOS app.
-
 ## Coding Style & Naming Conventions
 
-Use SwiftUI and SwiftData patterns already present in the project. Indent with 4 spaces. Use `PascalCase` for types, `camelCase` for properties and methods, and `private` for implementation details that do not need wider visibility. SwiftUI views should conform to `View` and keep UI in `body`; state should be scoped with `@State private var` when needed. Prefer `let` for constants, avoid force unwraps, and keep imports minimal (`SwiftUI`, `SwiftData`, `Foundation` only where used).
+Use SwiftUI and SwiftData patterns already present in the project. Indent with 4 spaces. Use `PascalCase` for types, `camelCase` for properties and methods, and `private` for implementation details that do not need wider visibility. SwiftUI views should conform to `View` and keep UI in `body`; state should be scoped with `@State private var` when needed. Prefer `let` for constants, avoid force unwraps. Imports beyond `SwiftUI`/`SwiftData`/`Foundation` are common and expected for this app — `HealthKit`, `EventKit`, `WidgetKit`, `ActivityKit`, `FamilyControls`, `DeviceActivity`, `FoundationModels`, plus platform `AppKit`/`UIKit` (always behind `#if os(macOS)` / `#if os(iOS)`).
+
+Prefer `#if os(...)` blocks for any platform-specific code within shared files. The dual-tree `Rung/macOS-Only/` directory has been retired — every file is now shared under `Rung/`, with iOS UX as canonical (it uses cross-platform SwiftUI APIs that compile on macOS too).
 
 ## Testing Guidelines
 
@@ -31,7 +38,7 @@ Add unit tests in `RungTests.swift` or nearby test files using Swift Testing's `
 
 ## Commit & Pull Request Guidelines
 
-The current history contains only `Initial Commit`, so keep future commits short, imperative, and focused, for example `Add habit creation form` or `Fix item deletion crash`. Pull requests should include a concise description, testing performed, screenshots for UI changes, and links to any related issue or task. Note any data model or SwiftData migration impact explicitly.
+Keep commits short, imperative, and focused (the project's history is full of good examples — `Drop EKAuthorizationStatus.authorized — deprecated since iOS 17 / macOS 14`, `Embed RungWidgets.appex on iOS too — was incorrectly macOS-only`). Pull requests should include a concise description, testing performed, screenshots for UI changes, and links to any related issue or task. Note any data model or SwiftData migration impact explicitly. When editing a file that has both `Rung/macOS-Only/` and `Rung-iOS-Sources/` copies, mention both in the PR diff.
 
 ## Agent-Specific Instructions
 

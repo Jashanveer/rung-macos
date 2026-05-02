@@ -1,97 +1,126 @@
 import SwiftUI
 
+/// Elevated glass panel wrapper that only draws on macOS/iPad edge-handle layouts.
+/// On compact iPhone the surface is omitted so content scrolls full-bleed.
+struct OptionalPanelSurface: ViewModifier {
+    let isEnabled: Bool
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.cleanShotSurface(
+                shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+                level: .elevated,
+                shadowRadius: 18
+            )
+        } else {
+            content
+        }
+    }
+}
+
 struct SettingsPanel: View {
+    enum Mode {
+        case combined  // macOS / iPad: account + social together in one panel
+        case friends   // iPhone "Friends" tab: mentor, social summary, feed, suggestions
+        case account   // iPhone "Account" tab: account actions, time reminders
+    }
+
+    var mode: Mode = .combined
     let metrics: HabitMetrics
     @ObservedObject var backend: HabitBackendStore
     let habits: [Habit]
     let onReminderChange: (Habit, HabitReminderWindow?) -> Void
     var onClose: (() -> Void)? = nil
 
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     @State private var showDeleteConfirm = false
+
+    private var isCompact: Bool {
+        #if os(iOS)
+        horizontalSizeClass == .compact
+        #else
+        false
+        #endif
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.2")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(CleanShotTheme.accent)
-                        .frame(width: 30, height: 30)
-                        .cleanShotSurface(shape: RoundedRectangle(cornerRadius: 8, style: .continuous), level: .control)
+                header
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Social Circle")
-                            .font(.headline)
-                        Text("Following, consistency, small wins")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                if mode == .combined {
+                    PermissionsStatusCard()
+                    // Profile editing intentionally does not live here on
+                    // iPad / macOS. Both surfaces double as a roster of
+                    // friends + accountability data, so a duplicated
+                    // self-card would just take up space — the Stats
+                    // sidebar already shows the user's `ProfileIdentityCard`
+                    // and the iPhone Friends tab keeps the editable
+                    // `ProfileEditCard` at its top.
+                    AccountActionsCard(backend: backend, showDeleteConfirm: $showDeleteConfirm)
+                    EnergyViewSettingsCard()
+                    VerificationHelpCard()
+                    EmailPreferencesCard(backend: backend)
+                    AcknowledgmentsCard()
+                }
 
-                    Spacer()
+                // Profile lives at the very top of the Friends tab — the
+                // user's own card sits above the leaderboard so they can
+                // see themselves alongside friends without bouncing tabs.
+                if mode == .friends {
+                    ProfileEditCard(backend: backend)
+                }
 
-                    if let onClose {
-                        Button(action: onClose) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 24, height: 24)
-                                .cleanShotSurface(shape: Circle(), level: .control)
+                if mode == .friends, let dashboard = backend.dashboard {
+                    FriendsLeaderboardCard(dashboard: dashboard)
+                }
+
+                if mode == .friends || mode == .combined {
+                    SocialSummaryCard(metrics: metrics, dashboard: backend.dashboard)
+
+                    SocialFeedCard(dashboard: backend.dashboard)
+
+                    FriendSuggestionsCard(
+                        dashboard: backend.dashboard,
+                        searchResults: backend.friendSearchResults,
+                        isSearching: backend.friendSearchRequestState.isLoading,
+                        onSearch: { query in
+                            await backend.searchFriends(query: query)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Close")
+                    ) { userID in
+                        Task {
+                            await backend.requestFriend(userID: userID)
+                        }
                     }
                 }
 
-                PermissionsStatusCard()
-
-                #if !os(macOS)
-                // Profile editing on macOS lives in the dedicated
-                // first-launch flow only — the Social Circle panel
-                // skips it to keep the macOS surface focused on
-                // people / accountability rather than identity.
-                ProfileEditCard(backend: backend)
-                #endif
-
-                AccountActionsCard(backend: backend, showDeleteConfirm: $showDeleteConfirm)
-
-                EnergyViewSettingsCard()
-
-                VerificationHelpCard()
-
-                EmailPreferencesCard(backend: backend)
-
-                AcknowledgmentsCard()
-
-                SocialSummaryCard(metrics: metrics, dashboard: backend.dashboard)
-
-                SocialFeedCard(dashboard: backend.dashboard)
-
-                FriendSuggestionsCard(
-                    dashboard: backend.dashboard,
-                    searchResults: backend.friendSearchResults,
-                    isSearching: backend.friendSearchRequestState.isLoading,
-                    onSearch: { query in
-                        await backend.searchFriends(query: query)
-                    }
-                ) { userID in
-                    Task {
-                        await backend.requestFriend(userID: userID)
-                    }
+                if mode == .combined {
+                    TimeRemindersCard(
+                        habits: habits,
+                        onReminderChange: onReminderChange
+                    )
                 }
 
-                TimeRemindersCard(
-                    habits: habits,
-                    onReminderChange: onReminderChange
-                )
+                if mode == .account {
+                    PermissionsStatusCard()
+
+                    TimeRemindersCard(
+                        habits: habits,
+                        onReminderChange: onReminderChange
+                    )
+
+                    EnergyViewSettingsCard()
+                    AccountActionsCard(backend: backend, showDeleteConfirm: $showDeleteConfirm)
+                    VerificationHelpCard()
+                    EmailPreferencesCard(backend: backend)
+                    AcknowledgmentsCard()
+                }
             }
             .padding(16)
         }
         .scrollIndicators(.hidden)
-        .cleanShotSurface(
-            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
-            level: .elevated,
-            shadowRadius: 18
-        )
+        .modifier(OptionalPanelSurface(isEnabled: !isCompact))
         .confirmationDialog(
             "Delete account?",
             isPresented: $showDeleteConfirm,
@@ -104,6 +133,171 @@ struct SettingsPanel: View {
         } message: {
             Text("This permanently deletes your account, all habits, and streak history. This cannot be undone.")
         }
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: headerIcon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(CleanShotTheme.accent)
+                .frame(width: 30, height: 30)
+                .cleanShotSurface(shape: RoundedRectangle(cornerRadius: 8, style: .continuous), level: .control)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(headerTitle)
+                    .font(.headline)
+                Text(headerSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .cleanShotSurface(shape: Circle(), level: .control)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+            }
+        }
+    }
+
+    private var headerIcon: String {
+        switch mode {
+        case .combined: return "person.2"
+        case .friends: return "person.2.fill"
+        case .account: return "person.crop.circle"
+        }
+    }
+
+    private var headerTitle: String {
+        switch mode {
+        case .combined: return "Social Circle"
+        case .friends: return "Friends"
+        case .account: return "Account"
+        }
+    }
+
+    private var headerSubtitle: String {
+        switch mode {
+        case .combined: return "Following, consistency, small wins"
+        case .friends: return "Leaderboard, mentor, follows"
+        case .account: return "Reminders and sign out"
+        }
+    }
+}
+
+/// Re-uses `AppleProfileSetupView` in its edit-mode init to let the
+/// user rename their handle or pick a different character at any
+/// time. Pre-fills the current username + avatar from the dashboard
+/// so an avatar-only change doesn't force a username re-pick. Always
+/// renders — when the dashboard hasn't loaded a profile yet we still
+/// show the card with a "Set up profile" CTA so the Friends tab never
+/// looks empty for users who haven't completed setup.
+struct ProfileEditCard: View {
+    @ObservedObject var backend: HabitBackendStore
+    @State private var showSheet = false
+
+    private var profile: AccountabilityDashboard.Profile? {
+        backend.dashboard?.profile
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PanelTitle(systemImage: "person.crop.square", title: "Profile")
+
+            HStack(spacing: 12) {
+                AsyncImage(url: URL(string: profile?.avatarUrl ?? "")) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    Image(systemName: "person.crop.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(width: 44, height: 44)
+                .clipShape(Circle())
+                .overlay(
+                    Circle().strokeBorder(CleanShotTheme.accent.opacity(0.35), lineWidth: 1)
+                )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    if let secondary = secondaryLine {
+                        Text(secondary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+            }
+
+            Button {
+                showSheet = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(actionLabel)
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(CleanShotTheme.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .cleanShotSurface(
+                shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
+                level: .control
+            )
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cleanShotSurface(
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+            level: .control
+        )
+        .sheet(isPresented: $showSheet) {
+            AppleProfileSetupView(
+                backend: backend,
+                initialUsername: profile?.username ?? "",
+                initialAvatarURL: profile?.avatarUrl,
+                initialDisplayName: profile?.displayName ?? "",
+                onComplete: {
+                    showSheet = false
+                    Task { await backend.refreshDashboard() }
+                }
+            )
+        }
+    }
+
+    private var displayName: String {
+        if let name = profile?.displayName, !name.isEmpty { return name }
+        return "Your profile"
+    }
+
+    private var secondaryLine: String? {
+        if let username = profile?.username, !username.isEmpty {
+            return "@\(username.lowercased())"
+        }
+        return profile == nil ? "Tap to set up your name and avatar" : nil
+    }
+
+    private var actionLabel: String {
+        profile == nil ? "Set up profile" : "Edit profile"
     }
 }
 
@@ -126,9 +320,11 @@ struct AccountActionsCard: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 8) {
-                SoftActionButton(title: "Sign out", systemImage: "rectangle.portrait.and.arrow.right", action: backend.signOut)
-            }
+            SoftActionButton(
+                title: "Sign out",
+                systemImage: "rectangle.portrait.and.arrow.right",
+                action: backend.signOut
+            )
 
             Button {
                 showDeleteConfirm = true
@@ -154,101 +350,12 @@ struct AccountActionsCard: View {
     }
 }
 
-/// Re-uses `AppleProfileSetupView` in its edit-mode init to let the
-/// user rename their handle or pick a different character at any
-/// time. Pre-fills the current username + avatar from the dashboard
-/// so an avatar-only change doesn't force a username re-pick. Hidden
-/// when there's no dashboard yet (pre-auth or first-load) — falling
-/// back to a "loading…" state would just confuse users since the rest
-/// of Settings is also blank in that case.
-struct ProfileEditCard: View {
-    @ObservedObject var backend: HabitBackendStore
-    @State private var showSheet = false
-
-    private var profile: AccountabilityDashboard.Profile? {
-        backend.dashboard?.profile
-    }
-
-    var body: some View {
-        if let profile {
-            VStack(alignment: .leading, spacing: 10) {
-                PanelTitle(systemImage: "person.crop.square", title: "Profile")
-
-                HStack(spacing: 12) {
-                    AsyncImage(url: URL(string: profile.avatarUrl ?? "")) { image in
-                        image.resizable().scaledToFit()
-                    } placeholder: {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 30))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .frame(width: 44, height: 44)
-                    .clipShape(Circle())
-                    .overlay(
-                        Circle().strokeBorder(CleanShotTheme.accent.opacity(0.35), lineWidth: 1)
-                    )
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(profile.displayName.isEmpty ? "—" : profile.displayName)
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                        if let username = profile.username, !username.isEmpty {
-                            Text("@\(username.lowercased())")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-
-                    Spacer()
-                }
-
-                Button {
-                    showSheet = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("Edit profile")
-                            .font(.system(size: 12, weight: .semibold))
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .foregroundStyle(CleanShotTheme.accent)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                }
-                .buttonStyle(.plain)
-                .cleanShotSurface(
-                    shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
-                    level: .control
-                )
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .cleanShotSurface(
-                shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
-                level: .control
-            )
-            .sheet(isPresented: $showSheet) {
-                AppleProfileSetupView(
-                    backend: backend,
-                    initialUsername: profile.username ?? "",
-                    initialAvatarURL: profile.avatarUrl,
-                    initialDisplayName: profile.displayName,
-                    onComplete: {
-                        showSheet = false
-                        Task { await backend.refreshDashboard() }
-                    }
-                )
-                .frame(minWidth: 460, minHeight: 600)
-            }
-        }
-    }
-}
-
+/// Full-width leaderboard card for the iPhone Friends tab. Same content as the
+/// compact `FriendsLeaderboardPill` dropdown but without the pill-chrome since
+/// it lives inside a scrolling tab rather than a floating top-bar pill.
+/// Single-toggle email preferences tile. Today only the Sunday weekly report
+/// is gated by this flag — additional channels can be split into rows here as
+/// the backend grows new preference fields.
 /// Surfaces the same `VerificationHelpSheet` that's reachable from
 /// onboarding, so users who skipped onboarding (or want a refresher
 /// later) can still see which habits auto-verify and what their
@@ -298,9 +405,6 @@ struct VerificationHelpCard: View {
     }
 }
 
-/// Single-toggle email preferences tile. Today only the Sunday weekly report
-/// is gated by this flag — additional channels can be split into rows here as
-/// the backend grows new preference fields.
 struct EmailPreferencesCard: View {
     @ObservedObject var backend: HabitBackendStore
 
@@ -347,6 +451,157 @@ struct EmailPreferencesCard: View {
             if backend.preferences == nil {
                 await backend.loadPreferences()
             }
+        }
+    }
+}
+
+struct FriendsLeaderboardCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let dashboard: AccountabilityDashboard
+
+    private struct LeaderEntry: Identifiable {
+        let id: Int64
+        let displayName: String
+        let consistency: Int
+        let isCurrentUser: Bool
+    }
+
+    private var entries: [LeaderEntry] {
+        var result: [LeaderEntry] = [
+            LeaderEntry(
+                id: -1,
+                displayName: dashboard.profile.displayName,
+                consistency: dashboard.level.weeklyConsistencyPercent,
+                isCurrentUser: true
+            )
+        ]
+        let friends = (dashboard.social?.updates ?? []).map {
+            LeaderEntry(
+                id: $0.userId,
+                displayName: $0.displayName,
+                consistency: $0.weeklyConsistencyPercent,
+                isCurrentUser: false
+            )
+        }
+        result.append(contentsOf: friends)
+        return result.sorted { $0.consistency > $1.consistency }
+    }
+
+    private var hasFriends: Bool { !(dashboard.social?.updates ?? []).isEmpty }
+
+    private var currentUserRank: Int {
+        (entries.firstIndex { $0.isCurrentUser } ?? 0) + 1
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Label {
+                    Text("Leaderboard")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "trophy.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(CleanShotTheme.gold)
+                }
+                Spacer()
+                if hasFriends {
+                    Text("You #\(currentUserRank)")
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(CleanShotTheme.accent)
+                }
+            }
+
+            if entries.count <= 1 {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    Text("Add friends to compare consistency")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                            leaderRow(rank: index + 1, entry: entry)
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cleanShotSurface(
+            shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+            level: .control
+        )
+    }
+
+    private func leaderRow(rank: Int, entry: LeaderEntry) -> some View {
+        HStack(spacing: 10) {
+            Text("\(rank)")
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(rankColor(rank))
+                .frame(width: 18)
+
+            if rank <= 3 {
+                Image(systemName: rankMedal(rank))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(rankColor(rank))
+                    .frame(width: 16)
+            } else {
+                Color.clear.frame(width: 16)
+            }
+
+            Text(entry.isCurrentUser ? "You" : entry.displayName)
+                .font(.system(size: 13, weight: entry.isCurrentUser ? .semibold : .medium))
+                .foregroundStyle(entry.isCurrentUser ? CleanShotTheme.accent : .primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.14))
+                    .frame(width: 56, height: 4)
+                Capsule()
+                    .fill(entry.isCurrentUser ? CleanShotTheme.accent : CleanShotTheme.success)
+                    .frame(width: 56 * CGFloat(entry.consistency) / 100.0, height: 4)
+            }
+
+            Text("\(entry.consistency)%")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 34, alignment: .trailing)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            entry.isCurrentUser
+                ? CleanShotTheme.accent.opacity(colorScheme == .dark ? 0.08 : 0.05)
+                : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+    }
+
+    private func rankColor(_ rank: Int) -> Color {
+        switch rank {
+        case 1: return CleanShotTheme.gold
+        case 2: return Color.gray.opacity(0.85)
+        case 3: return CleanShotTheme.warning.opacity(0.8)
+        default: return .secondary
+        }
+    }
+
+    private func rankMedal(_ rank: Int) -> String {
+        switch rank {
+        case 1: return "medal.fill"
+        case 2: return "medal"
+        case 3: return "medal"
+        default: return "circle.fill"
         }
     }
 }
@@ -692,7 +947,7 @@ struct SoftActionButton: View {
             level: .control,
             isActive: isHovered
         )
-        .onHover { isHovered = $0 }
+        .pressHover($isHovered)
     }
 }
 
@@ -924,7 +1179,7 @@ private struct TimeReminderOptionButton: View {
             level: .control,
             isActive: isSelected || isHovered
         )
-        .onHover { isHovered = $0 }
+        .pressHover($isHovered)
     }
 }
 
@@ -1089,3 +1344,4 @@ struct AcknowledgmentsSheet: View {
         THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         """
 }
+

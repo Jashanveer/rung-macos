@@ -283,7 +283,6 @@ struct PhoneTabScaffold: View {
                 metrics: metrics,
                 backend: backend,
                 habits: habits.filter { $0.entryType == .habit },
-                onSync: onSync,
                 onReminderChange: onReminderChange
             )
             .padding(.horizontal, 16)
@@ -302,7 +301,6 @@ struct PhoneTabScaffold: View {
                 metrics: metrics,
                 backend: backend,
                 habits: habits.filter { $0.entryType == .habit },
-                onSync: onSync,
                 onReminderChange: onReminderChange
             )
             .padding(.horizontal, 16)

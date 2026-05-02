@@ -65,9 +65,11 @@ struct HabitMigrationTests {
     @Test func legacyInitDefaultsNewVerificationFields() {
         // Simulates a habit created by an older build that didn't know about
         // verification. The new fields must take their defaults without
-        // forcing callers to pass them explicitly.
+        // forcing callers to pass them explicitly. Title is non-canonical
+        // so `effectiveCanonical` doesn't supersede the raw defaults — this
+        // test isolates the storage defaults, not the canonical fallback.
         let habit = Habit(
-            title: "Run",
+            title: "Custom user habit xyzzy",
             entryType: .habit,
             createdAt: Date(),
             completedDayKeys: ["2026-04-20"]
@@ -91,7 +93,9 @@ struct HabitMigrationTests {
     @Test func unknownRawValuesFallBackSafely() {
         // A build that persisted a verification tier we don't recognize
         // (future build wrote it) must degrade gracefully, not crash.
-        let habit = Habit(title: "Run")
+        // Title is intentionally non-canonical so `effectiveCanonical`
+        // doesn't supersede the raw-value fallback we're isolating here.
+        let habit = Habit(title: "Custom user habit xyzzy")
         habit.verificationTierRaw = "futurePlatinumTier"
         habit.verificationSourceRaw = "quantumVerifier"
         #expect(habit.verificationTier == .selfReport)

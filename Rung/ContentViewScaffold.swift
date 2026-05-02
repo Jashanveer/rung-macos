@@ -2,6 +2,10 @@ import SwiftData
 import SwiftUI
 
 struct ContentViewScaffold: View {
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+
     @StateObject private var focusController = FocusController.shared
 
     let colorScheme: ColorScheme
@@ -24,13 +28,13 @@ struct ContentViewScaffold: View {
     let showOnboarding: Bool
 
     let stampNamespace: Namespace.ID
-    let stampStagingIds: Set<PersistentIdentifier>
 
     /// Drives the genie-style morph between each edge pill and its
     /// corresponding panel. Each pill/panel pair shares an id under this
     /// namespace; matchedGeometryEffect interpolates the pill's frame to
     /// the panel's frame on open and back on close.
     @Namespace private var panelMorph
+    let stampStagingIds: Set<PersistentIdentifier>
 
     let onAddHabit: (HabitEntryType, Date?, CanonicalHabit?, Int?, TaskPriority?) -> Void
     let onToggleHabit: (Habit) -> Void
@@ -41,7 +45,64 @@ struct ContentViewScaffold: View {
 
     var body: some View {
         ZStack {
+            #if os(iOS)
+            if horizontalSizeClass == .compact {
+                phoneScaffold
+            } else {
+                padOrMacScaffold
+            }
+            #else
+            padOrMacScaffold
+            #endif
+
+            if focusController.isImmersivePresented {
+                FocusModeView(controller: focusController)
+                    .zIndex(500)
+                    .transition(.opacity.combined(with: .scale(scale: 1.04)))
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: focusController.isImmersivePresented)
+    }
+
+    // MARK: - iPhone (compact) — TabView wireframe
+
+    #if os(iOS)
+    @ViewBuilder
+    private var phoneScaffold: some View {
+        PhoneTabScaffold(
+            colorScheme: colorScheme,
+            habits: habits,
+            todayKey: todayKey,
+            newHabitTitle: $newHabitTitle,
+            newEntryType: $newEntryType,
+            metrics: metrics,
+            backend: backend,
+            showCelebration: showCelebration,
+            mentorNudge: $mentorNudge,
+            showMentorCharacter: showMentorCharacter,
+            showMenteeCharacter: showMenteeCharacter,
+            showOnboarding: showOnboarding,
+            stampNamespace: stampNamespace,
+            stampStagingIds: stampStagingIds,
+            onAddHabit: onAddHabit,
+            onToggleHabit: onToggleHabit,
+            onDeleteHabit: onDeleteHabit,
+            onSync: onSync,
+            onReminderChange: onReminderChange,
+            onCompleteOnboarding: onCompleteOnboarding
+        )
+    }
+    #endif
+
+    // MARK: - iPad & macOS — preserved edge-handle layout
+
+    @ViewBuilder
+    private var padOrMacScaffold: some View {
+        ZStack {
             MinimalBackground()
+                #if os(iOS)
+                .ignoresSafeArea()
+                #endif
                 .zIndex(-1)
 
             DoneHabitPillsBackground(
@@ -252,35 +313,40 @@ struct ContentViewScaffold: View {
                 AppleProfileSetupView(
                     backend: backend,
                     prefilledDisplayName: backend.pendingAppleFullName
-                ) {
-                    // Setup committed; flag is already cleared by the
-                    // store. UI naturally falls through to OnboardingView
-                    // on the next render because requiresProfileSetup is
-                    // false now.
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .zIndex(195)
+                ) {}
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .zIndex(195)
             } else if showOnboarding {
                 OnboardingView(onComplete: onCompleteOnboarding)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     .zIndex(190)
             }
         }
-        // Walking characters — applied BEFORE the RungIntroView overlay so
-        // the cold-launch yellow/blue cascade sits on top of them. SwiftUI
-        // composes `.overlay` modifiers in declaration order (later → on top),
-        // so the previous order (intro first, mentor/mentee after) caused
-        // Bruce + the rival mentee to peek through the loading screen on
-        // every cold launch. Keep the intro overlay LAST.
+        // Walking characters — pinned to the bottom of the scaffold on both
+        // iPad and macOS. Width is capped on iPad so the character walks
+        // within a band aligned to the center panel rather than wandering
+        // across the full ~1200pt window. `.ignoresSafeArea(.keyboard)`
+        // keeps them on-screen when a text field brings up the keyboard.
+        // Applied *before* the RungIntroView overlay so the intro sits on
+        // top of them during cold-launch (the mentor must not peek out from
+        // behind the loading screen).
         .overlay(alignment: .bottom) {
             if showMentorCharacter && backend.isAuthenticated {
                 MentorCharacterView(backend: backend, nudge: $mentorNudge)
+                    #if os(iOS)
+                    .frame(maxWidth: 720)
+                    .ignoresSafeArea(.keyboard)
+                    #endif
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .overlay(alignment: .bottom) {
             if showMenteeCharacter && backend.isAuthenticated {
                 MenteeCharacterView(backend: backend)
+                    #if os(iOS)
+                    .frame(maxWidth: 720)
+                    .ignoresSafeArea(.keyboard)
+                    #endif
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -292,14 +358,8 @@ struct ContentViewScaffold: View {
             .transition(.opacity)
             .zIndex(200)
         }
-        .overlay {
-            if focusController.isImmersivePresented {
-                FocusModeView(controller: focusController)
-                    .zIndex(500)
-                    .transition(.opacity.combined(with: .scale(scale: 1.04)))
-            }
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: focusController.isImmersivePresented)
+        #if os(macOS)
         .frame(minWidth: 900, minHeight: 600)
+        #endif
     }
 }
