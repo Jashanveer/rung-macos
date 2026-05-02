@@ -11,7 +11,6 @@
 		9B49CD9F2F9BD0CD001B86CD /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9B49CD9E2F9BD0CD001B86CD /* DeviceActivity.framework */; };
 		9B49CDA72F9BD0CE001B86CD /* ScreenTimeMonitor.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9BD3C28B2FA1A18D00F9F0E5 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
-		9BWATCH0001000000000001 /* RungWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 9BWATCH0000000000000001 /* RungWatch.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FA112B4AA34979A6793FF969 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
 		FC69D715931379676998B8A7 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EAFAFB09EE3A870B45A5981A /* Cocoa.framework */; platformFilters = (macos, ); };
 /* End PBXBuildFile section */
@@ -67,18 +66,30 @@
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		9BWATCH0003000000000003 /* Embed Watch Content */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
-			dstSubfolderSpec = 16;
-			files = (
-				9BWATCH0001000000000001 /* RungWatch.app in Embed Watch Content */,
-			);
-			name = "Embed Watch Content";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		9BWATCH0050000000000050 /* Embed Watch Content (device only) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/RungWatch.app",
+			);
+			name = "Embed Watch Content (device only)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Replaces Xcode's default \"Embed Watch Content\" PBXCopyFilesBuildPhase\n# with a conditional copy. Apple's embeddedBinaryValidationUtility in\n# Xcode 16+ rejects ANY embedded watchOS app inside an iPhone Simulator\n# host bundle (even one correctly built for watchsimulator). The\n# official PBXCopyFilesBuildPhase auto-registers an entry in the\n# validator's check list, so removing the file after the copy fails —\n# the validator complains the registered file is gone.\n#\n# Using a script phase bypasses validator auto-registration. We copy\n# RungWatch.app to ${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Watch/\n# only for iphoneos hosts (real iPhones / archive). iphonesimulator,\n# macosx, and any other host gets no Watch payload, so no validation\n# runs. Paired iPhone+Watch simulator runs install the watch app\n# through the simulator's own pairing pathway, not via this embed,\n# so skipping is safe there too.\n#\n# The dependency on the RungWatch target is preserved in the Rung\n# target's dependencies array, so RungWatch.app still builds on every\n# host build — it just isn't copied into non-iphoneos host bundles.\nif [ \"$PLATFORM_NAME\" != \"iphoneos\" ]; then\n  echo \"note: Skipping Watch embed for $PLATFORM_NAME host (only iphoneos embeds RungWatch.app).\"\n  exit 0\nfi\n\n# Watch dependency lands in a sibling platform products dir. For an\n# iphoneos host, the matching watch SDK is watchos (device).\nWATCH_PRODUCTS_DIR=\"${BUILD_DIR}/${CONFIGURATION}-watchos\"\nWATCH_SOURCE=\"${WATCH_PRODUCTS_DIR}/RungWatch.app\"\nif [ ! -d \"$WATCH_SOURCE\" ]; then\n  echo \"warning: $WATCH_SOURCE not found — RungWatch dependency may not have built for watchos. Skipping embed.\"\n  exit 0\nfi\n\nWATCH_DEST_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Watch\"\nmkdir -p \"$WATCH_DEST_DIR\"\nrm -rf \"$WATCH_DEST_DIR/RungWatch.app\"\n/bin/cp -R \"$WATCH_SOURCE\" \"$WATCH_DEST_DIR/\"\necho \"Embedded $WATCH_SOURCE into $WATCH_DEST_DIR/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXFileReference section */
 		9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ScreenTimeMonitor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -306,7 +317,7 @@
 				9BA6DAF92F8F3C8E009AA3BC /* Frameworks */,
 				9BA6DAFA2F8F3C8E009AA3BC /* Resources */,
 				536FF4A05F95E366523FC57D /* Embed App Extensions */,
-				9BWATCH0003000000000003 /* Embed Watch Content */,
+				9BWATCH0050000000000050 /* Embed Watch Content (device only) */,
 			);
 			buildRules = (
 			);
