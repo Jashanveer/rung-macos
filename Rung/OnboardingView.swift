@@ -9,7 +9,7 @@ import AppKit
 
 private let quote = "Success is the product of daily habits — not once-in-a-lifetime transformations."
 private let quoteAttribution = "— James Clear"
-private let bodyText = "The things you do every single day quietly compound into the person you become. Small, consistent habits are the architecture of an extraordinary life."
+private let bodyText = "Most habit apps trust your taps. Rung verifies what you actually did — through Apple Health, your friends, and your mentor — so the streaks you build finally mean something."
 
 struct OnboardingView: View {
     let onComplete: ([String]) -> Void

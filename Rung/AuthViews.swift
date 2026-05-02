@@ -579,12 +579,12 @@ struct AuthGateView: View {
     private var signInContent: some View {
         VStack(alignment: .leading, spacing: 28) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Welcome to Rung.")
+                Text("Verified habits.")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("One-tap sign in or sign up with Apple — Hide My Email is supported.")
+                Text("With friends, mentors, and Apple Health. One-tap sign in with Apple — Hide My Email is supported.")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -655,7 +655,13 @@ private struct StreakFreezeCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            PanelTitle(systemImage: "shield.fill", title: "Streak freeze")
+            VStack(alignment: .leading, spacing: 4) {
+                PanelTitle(systemImage: "shield.fill", title: "Flexible streaks")
+                Text("Life happens. Spend a token to protect today without losing your streak — sick days, travel, rest. Weekly habits already credit rest days automatically.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack(alignment: .center, spacing: 14) {
                 ZStack {
@@ -692,7 +698,7 @@ private struct StreakFreezeCard: View {
             HStack(spacing: 6) {
                 Image(systemName: "infinity")
                     .font(.caption2.weight(.semibold))
-                Text("Never expires · use manually to protect today")
+                Text("Never expires · no shame for using one")
                     .font(.caption2)
             }
             .foregroundStyle(.secondary)
@@ -781,7 +787,7 @@ private struct StreakFreezeCard: View {
                 Image(systemName: "sparkles")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.cyan.opacity(0.8))
-                Text("0 tokens — finish a perfect week to earn your first freeze")
+                Text("0 tokens — finish a perfect week to earn your first one")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

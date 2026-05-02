@@ -189,7 +189,6 @@ struct CenterPanel: View {
     private func buildGreetingPrompt() -> String {
         let hour = Calendar.current.component(.hour, from: Date())
         let timeOfDay = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening"
-        let habitNames = habits.map(\.title).joined(separator: ", ")
 
         if habits.isEmpty {
             return """
@@ -200,11 +199,40 @@ struct CenterPanel: View {
             """
         }
 
+        // Coaching-mode prompt: synthesise what we know about today and ask
+        // the model for ONE concrete next-action, not a generic platitude.
+        // Signals we feed it:
+        //   - Pending habits (which ones aren't done yet)
+        //   - Streak status (only flag risk if streak is established AND
+        //     habits remain, so we don't badger users early in the day)
+        //   - Today's meeting load (lets the coach defer to free time)
+        //   - Time of day (urgency increases later in the day)
+        let pending = pendingHabits.map(\.title)
+        let pendingPreview = pending.prefix(3).joined(separator: ", ")
+        let streakStatus: String = {
+            guard metrics.currentPerfectStreak >= 3, !pending.isEmpty else {
+                return "no immediate streak risk"
+            }
+            return "\(metrics.currentPerfectStreak)-day perfect streak at risk"
+        }()
+        let meetings = todaysMeetingCount
+        let meetingsLine = meetings > 0
+            ? "\(meetings) meeting\(meetings == 1 ? "" : "s") today"
+            : "calendar is open today"
+
         return """
-        Generate a single short greeting (max 6 words) for a habit tracker app. \
-        It's \(timeOfDay). The user has \(metrics.totalHabits) habits: \(habitNames). \
-        Perfect streak: \(metrics.currentPerfectStreak) days. Be warm and motivating. \
-        Output only the greeting, nothing else.
+        You are a coach inside a habit-tracker app. Output a single short \
+        next-action sentence (max 10 words) telling the user the one thing \
+        to do next. Be specific to the data, not generic. No emojis, no \
+        opening salutation, no exclamation marks.
+
+        Time of day: \(timeOfDay).
+        Habits done today: \(metrics.doneToday) of \(metrics.totalHabits).
+        Pending today: \(pendingPreview)\(pending.count > 3 ? " and \(pending.count - 3) more" : "").
+        Streak: \(streakStatus).
+        Schedule: \(meetingsLine).
+
+        Reply with only the sentence — no quotes, no preamble.
         """
     }
 }
