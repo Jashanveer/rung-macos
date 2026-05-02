@@ -416,6 +416,11 @@ final class WatchConnectivityService: NSObject {
         guard let action = message[WatchMessageKey.action] as? String else { return }
         switch action {
         case WatchMessageAction.requestSnapshot:
+            // Watch is explicitly asking for fresh data. Defeat the dedup
+            // cache so we don't silently no-op even on a force=true push,
+            // and log so the device console shows the message arrived.
+            print("[WatchConnectivity] received requestSnapshot from watch")
+            lastPushedJSON = nil
             forcePush()
         case WatchMessageAction.logHabit, WatchMessageAction.toggleHabit:
             applyHabitMutation(action: action, message: message)

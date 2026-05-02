@@ -1,4 +1,5 @@
 import SwiftUI
+import WatchKit
 
 /// Root view for the watchOS Rung companion. Six tabs paged vertically by
 /// the Digital Crown — Habits, Calendar, Stats, Friends, Mentor, Account —
@@ -45,68 +46,126 @@ struct ContentView: View {
     }
 }
 
-/// First-launch / disconnected state. Shows the live reachability so the
-/// user can tell whether their iPhone is awake, plus a Retry button and an
-/// auto-retry loop so a brief paired-but-not-yet-pushed window self-heals.
+/// First-launch / disconnected state. Shows the live WCSession diagnostic
+/// so the user can tell exactly why nothing's loading — activation pending,
+/// phone asleep, or watch app not installed on the iPhone's companion
+/// store. Retry button does belt-and-suspenders sending and bumps an
+/// attempt counter so even if delivery silently fails, the tap is visibly
+/// registered.
 private struct ConnectingView: View {
     @EnvironmentObject private var session: WatchSession
     @Environment(\.watchFontScale) private var scale: Double
 
-    @State private var attempts: Int = 0
-
     var body: some View {
-        VStack(spacing: 7) {
-            Spacer()
-            Image(systemName: "applewatch.radiowaves.left.and.right")
-                .font(.system(size: 28 * scale, weight: .regular))
-                .foregroundStyle(WatchTheme.accent)
-                .symbolEffect(.pulse, options: .repeating)
+        ScrollView {
+            VStack(spacing: 7) {
+                Image(systemName: "applewatch.radiowaves.left.and.right")
+                    .font(.system(size: 28 * scale, weight: .regular))
+                    .foregroundStyle(WatchTheme.accent)
+                    .symbolEffect(.pulse, options: .repeating)
+                    .padding(.top, 4)
 
-            Text("Open Rung\non iPhone")
-                .font(WatchTheme.font(.title, scale: scale, weight: .semibold))
-                .foregroundStyle(WatchTheme.ink)
-                .multilineTextAlignment(.center)
+                Text("Open Rung\non iPhone")
+                    .font(WatchTheme.font(.title, scale: scale, weight: .semibold))
+                    .foregroundStyle(WatchTheme.ink)
+                    .multilineTextAlignment(.center)
 
-            Text(session.isReachable ? "Paired · waiting for data" : "Phone not reachable")
-                .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
-                .foregroundStyle(WatchTheme.inkSoft)
-                .multilineTextAlignment(.center)
+                Text(headlineStatus)
+                    .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
+                    .foregroundStyle(headlineColor)
+                    .multilineTextAlignment(.center)
 
-            Spacer()
+                retryButton
 
-            Button {
-                attempts += 1
-                session.requestSnapshot()
-            } label: {
-                Label("Retry", systemImage: "arrow.clockwise")
-                    .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .fill(WatchTheme.brandGradient)
-                    )
+                diagnosticBlock
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WatchTheme.bg.ignoresSafeArea())
         .task {
             // Self-healing loop: if the watch was offline when the iPhone
             // pushed and we missed the first snapshot, ask again every few
-            // seconds until something arrives or the user taps Retry.
-            // Cancellation kicks in automatically when the view disappears
-            // (i.e. as soon as `hasReceivedRealData` flips to true).
-            for _ in 0..<60 {   // 60 × 3s = 3 min ceiling, then stop
+            // seconds until something arrives. Cancellation kicks in
+            // automatically when the view disappears (i.e. as soon as
+            // `hasReceivedRealData` flips to true).
+            for _ in 0..<60 {
                 if session.hasReceivedRealData { return }
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if Task.isCancelled { return }
                 if session.hasReceivedRealData { return }
                 session.requestSnapshot()
             }
+        }
+    }
+
+    private var headlineStatus: String {
+        if !session.diagnostic.isCompanionAppInstalled {
+            return "iPhone Rung not detected"
+        }
+        if session.isReachable {
+            return "Paired · waiting for data"
+        }
+        return "Phone unreachable · queuing"
+    }
+
+    private var headlineColor: Color {
+        session.isReachable ? WatchTheme.inkSoft : WatchTheme.warning
+    }
+
+    private var retryButton: some View {
+        Button {
+            WKInterfaceDevice.current().play(.click)
+            session.requestSnapshot()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.clockwise")
+                Text(session.retryCount == 0 ? "Retry" : "Retry · \(session.retryCount)")
+            }
+            .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(WatchTheme.brandGradient)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 4)
+    }
+
+    private var diagnosticBlock: some View {
+        VStack(spacing: 2) {
+            row(label: "STATE", value: session.diagnostic.activationState,
+                ok: session.diagnostic.activationState == "activated")
+            row(label: "REACH", value: session.isReachable ? "yes" : "no",
+                ok: session.isReachable)
+            row(label: "PAIR",  value: session.diagnostic.isCompanionAppInstalled ? "yes" : "no",
+                ok: session.diagnostic.isCompanionAppInstalled)
+            if let err = session.lastSendError {
+                Text(err)
+                    .font(WatchTheme.font(.label, scale: scale, weight: .regular))
+                    .foregroundStyle(WatchTheme.danger)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 2)
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private func row(label: String, value: String, ok: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                .tracking(0.8)
+                .foregroundStyle(WatchTheme.inkSoft)
+                .frame(width: 36, alignment: .leading)
+            Text(value)
+                .font(WatchTheme.font(.label, scale: scale, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ok ? WatchTheme.success : WatchTheme.warning)
+            Spacer()
         }
     }
 }

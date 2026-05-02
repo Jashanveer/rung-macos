@@ -29,6 +29,28 @@ final class WatchSession: NSObject, ObservableObject {
     /// queues automatically when the phone is asleep.
     @Published private(set) var isReachable: Bool = false
 
+    /// Live diagnostic snapshot the connecting view exposes so the user can
+    /// see WHY the watch isn't loading data — activation pending, phone
+    /// asleep, watch-app-not-installed-on-companion, etc. Updated on every
+    /// delegate callback and on every send attempt.
+    @Published private(set) var diagnostic: Diagnostic = Diagnostic()
+
+    /// Number of explicit retry / requestSnapshot calls fired since launch.
+    /// The connecting view shows this so the user has visual feedback that
+    /// their tap is doing something even when sendMessage swallows errors.
+    @Published private(set) var retryCount: Int = 0
+
+    /// Last error string from `sendMessage`'s error callback, if any. Helps
+    /// diagnose "iPhone not reachable" or stale companion bundle id issues.
+    @Published private(set) var lastSendError: String?
+
+    struct Diagnostic: Equatable {
+        var activationState: String = "unknown"
+        var isReachable: Bool = false
+        var isCompanionAppInstalled: Bool = false
+        var lastUpdated: Date = Date()
+    }
+
     private override init() {
         super.init()
         guard WCSession.isSupported() else { return }
@@ -125,11 +147,42 @@ final class WatchSession: NSObject, ObservableObject {
         self.snapshot = snap
     }
 
-    /// Ask the iPhone to push a fresh snapshot — used on first launch so the
-    /// Watch isn't stuck on the empty initial state until the user does
-    /// something on the phone.
+    /// Ask the iPhone to push a fresh snapshot. Called on first launch, on
+    /// reachability transitions, on auto-retry from the connecting view,
+    /// and on every Retry button tap. Bumps `retryCount` so the UI can
+    /// confirm the user's tap registered.
     func requestSnapshot() {
+        retryCount += 1
+        // Re-activate the WCSession in case it dropped — activate() is
+        // idempotent if already activated, and forces a fresh handshake
+        // when the previous activation never completed.
+        if WCSession.isSupported() {
+            let s = WCSession.default
+            if s.activationState != .activated {
+                s.activate()
+            }
+            refreshDiagnostic()
+        }
         send([WatchMessageKey.action: WatchMessageAction.requestSnapshot])
+    }
+
+    private func refreshDiagnostic() {
+        guard WCSession.isSupported() else { return }
+        let s = WCSession.default
+        let stateLabel: String = {
+            switch s.activationState {
+            case .notActivated:    return "notActivated"
+            case .inactive:        return "inactive"
+            case .activated:       return "activated"
+            @unknown default:      return "unknown"
+            }
+        }()
+        diagnostic = Diagnostic(
+            activationState: stateLabel,
+            isReachable: s.isReachable,
+            isCompanionAppInstalled: s.isCompanionAppInstalled,
+            lastUpdated: Date()
+        )
     }
 
     /// Quick-add a habit from the watch (dictation / Scribble entry on the
@@ -148,18 +201,40 @@ final class WatchSession: NSObject, ObservableObject {
     private func send(_ payload: [String: Any]) {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
-        guard session.activationState == .activated else { return }
+        // Don't bail on non-activated state — kick activation and queue
+        // through transferUserInfo so the message survives the gap.
+        if session.activationState != .activated {
+            print("[WatchSession] send: activation \(session.activationState.rawValue), kicking activate() and queuing via transferUserInfo")
+            session.activate()
+            session.transferUserInfo(payload)
+            return
+        }
 
         if session.isReachable {
-            // Live phone: best-effort. We don't block the UI on the reply —
-            // the iPhone re-broadcasts a fresh snapshot via application
-            // context after applying the change.
-            session.sendMessage(payload, replyHandler: nil) { _ in }
-        } else {
-            // Phone asleep / unreachable: queue via transferUserInfo so the
-            // change isn't dropped. iPhone delivers it on next wake.
-            session.transferUserInfo(payload)
+            // Live phone: try sendMessage for instant delivery, AND queue
+            // via transferUserInfo as a durable backup — sendMessage
+            // silently drops if the iPhone goes background between the
+            // reachability check and the actual delivery, so the backup
+            // means a missed retry can never be lost.
+            session.sendMessage(
+                payload,
+                replyHandler: { _ in
+                    Task { @MainActor [weak self] in
+                        self?.lastSendError = nil
+                    }
+                },
+                errorHandler: { err in
+                    Task { @MainActor [weak self] in
+                        print("[WatchSession] sendMessage error: \(err)")
+                        self?.lastSendError = err.localizedDescription
+                    }
+                }
+            )
         }
+        // Always queue via transferUserInfo — survives sleep, relaunches,
+        // and reachability hiccups. Cost is tiny (a few KB queued).
+        session.transferUserInfo(payload)
+        refreshDiagnostic()
     }
 
     // MARK: - Snapshot ingestion
@@ -191,8 +266,12 @@ extension WatchSession: WCSessionDelegate {
     nonisolated func session(_ session: WCSession,
                               activationDidCompleteWith state: WCSessionActivationState,
                               error: Error?) {
+        if let error {
+            print("[WatchSession] activation error: \(error)")
+        }
         Task { @MainActor in
             self.isReachable = session.isReachable
+            self.refreshDiagnostic()
             // Kick the phone for a fresh snapshot the first time we activate.
             if state == .activated {
                 self.requestSnapshot()
@@ -203,6 +282,12 @@ extension WatchSession: WCSessionDelegate {
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         Task { @MainActor in
             self.isReachable = session.isReachable
+            self.refreshDiagnostic()
+            // The iPhone just came online — ask for fresh data immediately
+            // in case the Connecting view is currently visible.
+            if session.isReachable, !self.hasReceivedRealData {
+                self.requestSnapshot()
+            }
         }
     }
 
