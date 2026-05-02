@@ -65,6 +65,23 @@ struct WatchSnapshot: Codable, Equatable {
         let notificationsOn: Bool
     }
 
+    // MARK: Mentor messages
+
+    /// One row in the mentor recent-conversations tab. Origin marks who sent
+    /// the message — `mentor` text is rendered left-aligned with a coloured
+    /// avatar dot, `me` text is right-aligned with a brand gradient dot.
+    struct WatchMentorMessage: Codable, Equatable, Identifiable {
+        enum Origin: String, Codable { case mentor, me }
+
+        var id: String { messageId }
+        let messageId: String          // backend uuid or local cuid
+        let origin: Origin
+        let senderName: String         // "Aanya" / "You" — used for the leading initial
+        let preview: String            // 1-line message body, already truncated by phone
+        let relativeTime: String       // "2m" / "1h" / "yest" — phone formats once
+        let isUnread: Bool             // mentor-origin only; drives the gold accent
+    }
+
     // MARK: Top-level
 
     let generatedAt: Date
@@ -78,6 +95,9 @@ struct WatchSnapshot: Codable, Equatable {
     let calendarHeatmap: [String: Double]   // yyyy-MM-dd → 0...1 completion intensity
     let calendarMonthLabel: String          // "APR" / "MAY" — top-right of the calendar tab
     let account: AccountInfo
+    /// Optional so the iPhone can keep broadcasting the legacy snapshot shape
+    /// during rollout; the watch falls back to an empty list in that case.
+    let mentorMessages: [WatchMentorMessage]?
 
     // MARK: Empty / placeholder
 
@@ -132,7 +152,21 @@ struct WatchSnapshot: Codable, Equatable {
                 avatarInitial: "J",
                 healthKitOn: true,
                 notificationsOn: true
-            )
+            ),
+            mentorMessages: [
+                .init(messageId: "m1", origin: .mentor, senderName: "Aanya",
+                      preview: "Proud of the streak. Keep it up tomorrow morning.",
+                      relativeTime: "12m", isUnread: true),
+                .init(messageId: "m2", origin: .me, senderName: "You",
+                      preview: "Thanks — leg day was brutal but I logged it.",
+                      relativeTime: "1h", isUnread: false),
+                .init(messageId: "m3", origin: .mentor, senderName: "Aanya",
+                      preview: "Did you finish your workout? Checking in 👀",
+                      relativeTime: "yest", isUnread: false),
+                .init(messageId: "m4", origin: .mentor, senderName: "Aanya",
+                      preview: "New plan posted in the circle — take a look.",
+                      relativeTime: "2d", isUnread: false),
+            ]
         )
     }
 

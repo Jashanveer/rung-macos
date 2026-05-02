@@ -213,8 +213,53 @@ final class WatchConnectivityService: NSObject {
             leaderboard: leaderboard,
             calendarHeatmap: calendarHeatmap,
             calendarMonthLabel: monthLabel,
-            account: account
+            account: account,
+            mentorMessages: makeMentorMessages(now: now)
         )
+    }
+
+    /// Maps the backend's mentee dashboard chat thread into the watch transport
+    /// shape. Returns the most recent 8 messages (the watch only renders ~5 at
+    /// a time but a small overflow lets the user scroll a touch). Unknown
+    /// origin / empty thread → `nil` so the watch shows its empty state.
+    private func makeMentorMessages(now: Date) -> [WatchSnapshot.WatchMentorMessage]? {
+        guard let messages = backend?.dashboard?.menteeDashboard.messages,
+              !messages.isEmpty else { return nil }
+        let me = backend?.currentUserId
+        let recent = messages.suffix(8)
+        return recent.map { msg in
+            let isMe = me.map { $0 == String(msg.senderId) } ?? false
+            return WatchSnapshot.WatchMentorMessage(
+                messageId: String(msg.id),
+                origin: isMe ? .me : .mentor,
+                senderName: isMe ? "You" : msg.senderName,
+                preview: previewLine(from: msg.message),
+                relativeTime: relativeStamp(iso: msg.createdAt, now: now),
+                isUnread: !isMe && msg.nudge
+            )
+        }
+    }
+
+    private func previewLine(from raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        return trimmed.count <= 64 ? trimmed : String(trimmed.prefix(63)) + "\u{2026}"
+    }
+
+    private func relativeStamp(iso: String, now: Date) -> String {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = parser.date(from: iso)
+            ?? ISO8601DateFormatter().date(from: iso)
+            ?? now
+        let mins = Int(now.timeIntervalSince(date) / 60)
+        if mins < 1 { return "now" }
+        if mins < 60 { return "\(mins)m" }
+        let hrs = mins / 60
+        if hrs < 24 { return "\(hrs)h" }
+        let days = hrs / 24
+        if days == 1 { return "yest" }
+        return "\(days)d"
     }
 
     private func makeWatchHabit(from habit: Habit, todayKey: String) -> WatchSnapshot.WatchHabit {

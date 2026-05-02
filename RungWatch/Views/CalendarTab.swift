@@ -8,7 +8,7 @@ struct CalendarTab: View {
     private var snapshot: WatchSnapshot { session.snapshot }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("S M T W T F S")
                 .font(.system(size: 8, weight: .semibold))
                 .tracking(1.2)
@@ -32,6 +32,7 @@ struct CalendarTab: View {
         .padding(.top, 2)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .watchPageHeader("CALENDAR", accent: WatchTheme.gold, trailing: snapshot.calendarMonthLabel)
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
     }
 

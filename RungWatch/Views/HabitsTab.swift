@@ -13,7 +13,7 @@ struct HabitsTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 6) {
                 header
                 progressBar
                 habitsList
@@ -22,7 +22,7 @@ struct HabitsTab: View {
             .padding(.top, 2)
             .padding(.bottom, 8)
         }
-        .background(Color.black)
+        .watchPageHeader("HABITS", accent: WatchTheme.success, trailing: snapshot.timeOfDay)
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
     }
 
@@ -30,21 +30,24 @@ struct HabitsTab: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            // "4/7" — done count over total
             HStack(alignment: .lastTextBaseline, spacing: 0) {
                 Text("\(snapshot.metrics.doneToday)")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 16, weight: .heavy, design: .rounded))
+                    .foregroundStyle(WatchTheme.ink)
                 Text("/\(snapshot.metrics.totalToday)")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(WatchTheme.inkSoft)
             }
-            // "WED · 9:41"
-            Text("\(snapshot.weekdayShort) · \(snapshot.timeOfDay)")
-                .font(.system(size: 8.5, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(WatchTheme.inkSoft)
+            Text(snapshot.weekdayShort)
+                .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                .tracking(0.9)
+                .foregroundStyle(WatchTheme.gold)
             Spacer()
+            if snapshot.metrics.currentStreak > 0 {
+                Text("\u{1F525}\(snapshot.metrics.currentStreak)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(WatchTheme.gold)
+            }
         }
     }
 

@@ -73,24 +73,43 @@ extension View {
         )
     }
 
-    /// Status-bar style applied to the top of every tab. Left side ink, right
-    /// side gold monospaced label (e.g. "STATS", "ME", "APR").
+    /// CleanShot-style page header. A small accent dot, the page title in
+    /// caps, and an optional right-side monospaced label (e.g. "9:41" or
+    /// "APR"). Sits above the tab content with a hairline divider so users
+    /// know which screen they're on at a glance.
     @ViewBuilder
-    func watchStatusBar(left: String, right: String) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(left)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.85))
-                Spacer()
-                Text(right)
-                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-                    .tracking(0.8)
-                    .foregroundStyle(WatchTheme.gold)
+    func watchPageHeader(
+        _ title: String,
+        accent: Color = WatchTheme.accent,
+        trailing: String? = nil
+    ) -> some View {
+        VStack(spacing: 3) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 4, height: 4)
+                    .shadow(color: accent.opacity(0.7), radius: 2)
+                Text(title)
+                    .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                    .tracking(1.4)
+                    .foregroundStyle(WatchTheme.ink)
+                Spacer(minLength: 4)
+                if let trailing {
+                    Text(trailing)
+                        .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                        .tracking(0.7)
+                        .foregroundStyle(WatchTheme.inkSoft)
+                }
             }
-            .frame(height: 14)
-            .padding(.horizontal, 10)
-            .padding(.top, 3)
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [accent.opacity(0.55), accent.opacity(0.0)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 0.5)
             self
         }
     }

@@ -17,6 +17,7 @@ struct AccountTab: View {
         .padding(.top, 2)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .watchPageHeader("ACCOUNT", accent: WatchTheme.violet, trailing: account.handle)
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
     }
 

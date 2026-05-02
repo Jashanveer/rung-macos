@@ -7,7 +7,7 @@ struct StatsTab: View {
     private var metrics: WatchSnapshot.Metrics { session.snapshot.metrics }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             levelRow
             xpBar
             statGrid
@@ -16,6 +16,7 @@ struct StatsTab: View {
         .padding(.top, 2)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .watchPageHeader("STATS", accent: WatchTheme.violet, trailing: metrics.levelName.uppercased())
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
     }
 

@@ -20,7 +20,17 @@ struct FriendsTab: View {
             .padding(.top, 2)
             .padding(.bottom, 8)
         }
+        .watchPageHeader(
+            "FRIENDS",
+            accent: WatchTheme.accent,
+            trailing: youRankLabel
+        )
         .containerBackground(WatchTheme.bg.gradient, for: .tabView)
+    }
+
+    private var youRankLabel: String? {
+        guard let me = entries.first(where: { $0.isCurrentUser }) else { return nil }
+        return "YOU #\(me.rank)"
     }
 }
 
