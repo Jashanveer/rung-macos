@@ -40,7 +40,11 @@ final class WatchSession: NSObject, ObservableObject {
 
     /// Tell the iPhone to log a +N count delta against a manual habit.
     /// Used by `HabitDetailView` when the user rotates the crown.
+    /// Also patches the local snapshot so the ring fills in instantly —
+    /// the iPhone's authoritative re-broadcast lands a beat later via
+    /// sendMessage / applicationContext and overwrites our optimistic state.
     func logHabit(id: String, delta: Int) {
+        applyOptimistic(id: id, completing: delta > 0)
         send([
             WatchMessageKey.action: WatchMessageAction.logHabit,
             WatchMessageKey.habitId: id,
@@ -49,11 +53,62 @@ final class WatchSession: NSObject, ObservableObject {
     }
 
     /// Tell the iPhone to flip a binary habit's done-state for today.
+    /// Mutates the cached snapshot first so the row checks/unchecks the
+    /// instant the user taps; the iPhone's re-broadcast confirms or corrects
+    /// within a few hundred milliseconds when reachable.
     func toggleHabit(id: String) {
+        applyOptimistic(id: id, completing: nil)
         send([
             WatchMessageKey.action: WatchMessageAction.toggleHabit,
             WatchMessageKey.habitId: id
         ])
+    }
+
+    /// Mutate `snapshot.pendingHabits` / `snapshot.completedHabits` to reflect
+    /// a tap before the iPhone replies. `completing == true` forces "done",
+    /// `false` forces "not done", `nil` flips whatever the row's current
+    /// state is. Idempotent: matching by `id` means we never duplicate a row.
+    private func applyOptimistic(id: String, completing: Bool?) {
+        var snap = snapshot
+        let allRows = snap.pendingHabits + snap.completedHabits
+        guard let row = allRows.first(where: { $0.id == id }) else { return }
+        guard row.kind == .manual else { return }   // auto-verified rows are read-only
+
+        let target: Bool
+        switch completing {
+        case .some(let value): target = value
+        case .none:            target = !row.isCompleted
+        }
+
+        let updated = WatchSnapshot.WatchHabit(
+            id: row.id, title: row.title, emoji: row.emoji, kind: row.kind,
+            progress: target ? max(row.progress, 1.0) : 0.0,
+            unitsLogged: target && row.unitsTarget > 0 ? row.unitsTarget : 0,
+            unitsTarget: row.unitsTarget, unitsLabel: row.unitsLabel,
+            isCompleted: target, sourceLabel: row.sourceLabel,
+            canonicalKey: row.canonicalKey
+        )
+        snap.pendingHabits   = snap.pendingHabits.filter   { $0.id != id }
+        snap.completedHabits = snap.completedHabits.filter { $0.id != id }
+        if target { snap.completedHabits.append(updated) }
+        else      { snap.pendingHabits.append(updated) }
+
+        // Bump the metrics counter so the header "4/7" updates in lockstep.
+        let totalDone = snap.completedHabits.count
+        snap.metrics = WatchSnapshot.Metrics(
+            doneToday: totalDone,
+            totalToday: snap.metrics.totalToday,
+            currentStreak: snap.metrics.currentStreak,
+            bestStreak: snap.metrics.bestStreak,
+            level: snap.metrics.level,
+            levelName: snap.metrics.levelName,
+            xp: snap.metrics.xp,
+            xpForNextLevel: snap.metrics.xpForNextLevel,
+            nextLevelProgress: snap.metrics.nextLevelProgress,
+            leaderboardRank: snap.metrics.leaderboardRank,
+            freezesAvailable: snap.metrics.freezesAvailable
+        )
+        self.snapshot = snap
     }
 
     /// Ask the iPhone to push a fresh snapshot — used on first launch so the

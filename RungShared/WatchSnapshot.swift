@@ -88,9 +88,9 @@ struct WatchSnapshot: Codable, Equatable {
     let todayKey: String               // "yyyy-MM-dd"
     let weekdayShort: String           // "WED" / "THU" / etc — the iPhone formats once
     let timeOfDay: String              // "9:41" — iPhone formats so the Watch doesn't recompute
-    let pendingHabits: [WatchHabit]    // includes everything the user could check today
-    let completedHabits: [WatchHabit]  // already-done, used for opacity/strikethrough
-    let metrics: Metrics
+    var pendingHabits: [WatchHabit]    // includes everything the user could check today
+    var completedHabits: [WatchHabit]  // already-done, used for opacity/strikethrough
+    var metrics: Metrics
     let leaderboard: [WatchLeaderboardEntry]
     let calendarHeatmap: [String: Double]   // yyyy-MM-dd → 0...1 completion intensity
     let calendarMonthLabel: String          // "APR" / "MAY" — top-right of the calendar tab

@@ -91,6 +91,18 @@ final class WatchConnectivityService: NSObject {
         lastPushedJSON = data
 
         let payload: [String: Any] = ["snapshot": data]
+
+        // Live channel: sendMessage delivers in <100ms when the watch is
+        // reachable (foreground or recent wrist-raise). We don't block on
+        // the reply — applicationContext below guarantees eventual delivery
+        // even if this fails. This is the same instant-feel pattern the
+        // backend SSE channel gives us between iOS and macOS.
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil) { _ in }
+        }
+
+        // Durable channel: applicationContext survives sleep + relaunches
+        // and is the source of truth the watch reads on cold start.
         do {
             try session.updateApplicationContext(payload)
         } catch {
@@ -413,17 +425,24 @@ final class WatchConnectivityService: NSObject {
         if habit.isAutoVerified { return }   // auto-verified rows ignore manual toggles
 
         let todayKey = DateKey.key(for: Date())
+        var didFlipToDone = false
 
         switch action {
         case WatchMessageAction.toggleHabit:
             var keys = habit.completedDayKeys
             if let i = keys.firstIndex(of: todayKey) {
                 keys.remove(at: i)
+                habit.pendingCheckDayKey = todayKey
+                habit.pendingCheckIsDone = false
             } else {
                 keys.append(todayKey)
+                habit.pendingCheckDayKey = todayKey
+                habit.pendingCheckIsDone = true
+                didFlipToDone = true
             }
             habit.completedDayKeys = keys.sorted()
             habit.updatedAt = Date()
+            habit.syncStatus = .pending
         case WatchMessageAction.logHabit:
             // Treat any non-zero delta as "the user worked on this habit".
             // Without per-unit storage we can only flip the day to done; the
@@ -431,7 +450,11 @@ final class WatchConnectivityService: NSObject {
             let delta = (message[WatchMessageKey.delta] as? Int) ?? 1
             if delta > 0, !habit.completedDayKeys.contains(todayKey) {
                 habit.completedDayKeys = (habit.completedDayKeys + [todayKey]).sorted()
+                habit.pendingCheckDayKey = todayKey
+                habit.pendingCheckIsDone = true
                 habit.updatedAt = Date()
+                habit.syncStatus = .pending
+                didFlipToDone = true
             }
         default:
             break
@@ -439,6 +462,27 @@ final class WatchConnectivityService: NSObject {
 
         try? context.save()
         forcePush()
+
+        // Mirror what ContentView.toggleHabit does on the iPhone side: stamp
+        // a self-report verification tier so leaderboard points stay honest,
+        // then bump backend.staleResourceTick. ContentView observes that
+        // tick and runs syncWithBackend, which flushes our `.pending` row to
+        // the server — the same path Mac + iOS already use, so all three
+        // surfaces converge through the backend SSE stream within seconds.
+        if let backend {
+            if didFlipToDone {
+                Task { @MainActor in
+                    await backend.verifyCompletion(
+                        habit: habit,
+                        dayKey: todayKey,
+                        modelContext: context
+                    )
+                    backend.staleResourceTick &+= 1
+                }
+            } else {
+                backend.staleResourceTick &+= 1
+            }
+        }
     }
 
     private func matchHabit(_ habits: [Habit], id: String) -> Habit? {

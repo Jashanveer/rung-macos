@@ -1,4 +1,5 @@
 import SwiftUI
+import WatchKit
 
 /// Tab 1 — homepage. Shows pending habits as a vertical list.
 /// HealthKit-linked rows display a ♥ AUTO badge instead of a hollow circle
@@ -83,7 +84,14 @@ struct HabitsTab: View {
 /// Wraps each habit row in either a NavigationLink (drill-in) or a Button
 /// (toggle for binary manuals). Auto-verified rows can still drill in to
 /// see the synced number, but their tap behaviour never mutates state.
+///
+/// Binary manual habits (target == 0) flip done/not-done with a single tap
+/// for live-feel parity with iPhone — the optimistic update inside
+/// `WatchSession.toggleHabit` flips the row instantly and the iPhone's
+/// re-broadcast confirms within a few hundred milliseconds. Counted manual
+/// habits (water 6/8 etc.) still drill into the crown-rotation detail view.
 private struct NavigationLinkOrButton: View {
+    @EnvironmentObject private var session: WatchSession
     let habit: WatchSnapshot.WatchHabit
 
     var body: some View {
@@ -91,6 +99,14 @@ private struct NavigationLinkOrButton: View {
         case .healthKit:
             NavigationLink {
                 HealthDetailView(habit: habit)
+            } label: {
+                HabitRow(habit: habit)
+            }
+            .buttonStyle(.plain)
+        case .manual where habit.unitsTarget == 0:
+            Button {
+                WKInterfaceDevice.current().play(habit.isCompleted ? .click : .success)
+                session.toggleHabit(id: habit.id)
             } label: {
                 HabitRow(habit: habit)
             }
