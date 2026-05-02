@@ -115,6 +115,12 @@ final class WidgetSnapshotWriter {
         } catch {
             // Silent — App Group may not be provisioned in dev.
         }
+
+        // Re-broadcast the new state to the paired Apple Watch. Debounced
+        // inside the service so a burst of toggles becomes one push.
+        #if os(iOS)
+        WatchConnectivityService.shared.scheduleSnapshotPush(habits: visible)
+        #endif
     }
 
     // MARK: - Toggle outbox

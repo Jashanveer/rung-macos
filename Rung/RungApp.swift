@@ -30,6 +30,12 @@ struct RungApp: App {
         MainActor.assumeIsolated {
             AutoVerificationCoordinator.shared.bootstrap(container: Self.sharedModelContainer)
             ForegroundTracker.shared.startListening()
+            #if os(iOS)
+            // Activate the Watch companion bridge so paired Apple Watches
+            // start receiving snapshots. Safe to call on devices without
+            // a paired watch — `WCSession` no-ops when nothing's there.
+            WatchConnectivityService.shared.start(container: Self.sharedModelContainer)
+            #endif
             #if DEBUG
             // Seed the MeetingsPill's demo events at launch instead of
             // only when CenterPanel appears, so the pill shows up
