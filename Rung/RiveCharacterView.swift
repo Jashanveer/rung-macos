@@ -42,7 +42,11 @@ struct MentorCharacterView: View {
         if horizontalSizeClass == .compact { return 0.15 }
         return 0.35
         #else
-        return 0.35
+        // macOS sits the character on the scaffold's bottom edge with a
+        // ~15% sink so only the transparent footer of the .mov clips
+        // off — matches the pre-merge behaviour. The 0.35 the iOS code
+        // uses on iPad pushes the feet below the macOS window's edge.
+        return 0.15
         #endif
     }
 
@@ -410,7 +414,11 @@ struct MenteeCharacterView: View {
         if horizontalSizeClass == .compact { return 0.15 }
         return 0.35
         #else
-        return 0.35
+        // macOS sits the character on the scaffold's bottom edge with a
+        // ~15% sink so only the transparent footer of the .mov clips
+        // off — matches the pre-merge behaviour. The 0.35 the iOS code
+        // uses on iPad pushes the feet below the macOS window's edge.
+        return 0.15
         #endif
     }
 
