@@ -271,6 +271,60 @@ struct HabitRepository {
         let _: EmptyResponse = try await client.authorizedRequest(path: "/api/tasks/\(taskID)", method: "DELETE")
     }
 
+    // MARK: - Reminders
+
+    /// Lists every reminder for a habit. The legacy `reminderWindow`
+    /// column on `Habit` stays populated for backward compat, but the
+    /// rich per-habit reminder list lives in this separate endpoint.
+    func listReminders(habitID: Int64) async throws -> [HabitReminder] {
+        try await client.authorizedRequest(
+            path: "/api/habits/\(habitID)/reminders",
+            method: "GET"
+        )
+    }
+
+    /// Creates a reminder. Returns the persisted record with its
+    /// backend-assigned id, which the caller stores so subsequent
+    /// edits hit `PATCH /reminders/{id}` instead of duplicating.
+    func createReminder(habitID: Int64, reminder: HabitReminder) async throws -> HabitReminder {
+        try await client.authorizedRequest(
+            path: "/api/habits/\(habitID)/reminders",
+            method: "POST",
+            body: ReminderWriteRequest(reminder: reminder)
+        )
+    }
+
+    func updateReminder(habitID: Int64, reminderID: Int64, reminder: HabitReminder) async throws -> HabitReminder {
+        try await client.authorizedRequest(
+            path: "/api/habits/\(habitID)/reminders/\(reminderID)",
+            method: "PATCH",
+            body: ReminderWriteRequest(reminder: reminder)
+        )
+    }
+
+    func deleteReminder(habitID: Int64, reminderID: Int64) async throws {
+        let _: EmptyResponse = try await client.authorizedRequest(
+            path: "/api/habits/\(habitID)/reminders/\(reminderID)",
+            method: "DELETE"
+        )
+    }
+
+    private struct ReminderWriteRequest: Encodable {
+        let kind: String
+        let payload: String?
+        let weekdayMask: Int?
+        let snoozeMinutes: Int?
+        let enabled: Bool
+
+        init(reminder: HabitReminder) {
+            self.kind = reminder.kind.rawValue
+            self.payload = reminder.payload
+            self.weekdayMask = reminder.weekdayMask
+            self.snoozeMinutes = reminder.snoozeMinutes
+            self.enabled = reminder.enabled
+        }
+    }
+
     private struct HabitWriteRequest: Encodable {
         let title: String
         let reminderWindow: String?

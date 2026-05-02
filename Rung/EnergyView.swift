@@ -13,6 +13,7 @@ import SwiftUI
 /// return — never show speculative numbers.
 struct EnergyView: View {
     @ObservedObject var service: SleepInsightsService
+    @StateObject private var calendarService = CalendarService.shared
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var refreshing = false
@@ -42,8 +43,15 @@ struct EnergyView: View {
             VStack(spacing: 18) {
                 if let snapshot = service.snapshot, let forecast = service.forecast {
                     headerSection(snapshot: snapshot, forecast: forecast)
-                    EnergyCurveChart(forecast: forecast)
+                    let suggestion = HabitTimeSuggestion.suggest(
+                        events: calendarService.todaysEvents,
+                        forecast: forecast
+                    )
+                    EnergyCurveChart(forecast: forecast, suggestion: suggestion)
                         .frame(height: 180)
+                    if let suggestion {
+                        suggestionCallout(suggestion)
+                    }
                     staleDataNoticeIfNeeded()
                     sleepDebtSection(snapshot: snapshot)
                     recommendationsSection(forecast: forecast)
@@ -64,6 +72,40 @@ struct EnergyView: View {
     }
 
     // MARK: - Sections
+
+    /// Friendly callout below the curve that names the suggested time
+    /// in plain English and explains why it was picked. Mirrors the
+    /// "Best slot" pin on the chart so users connect the two.
+    @ViewBuilder
+    private func suggestionCallout(_ suggestion: HabitTimeSuggestion.Suggestion) -> some View {
+        let gold = Color(red: 0.94, green: 0.74, blue: 0.24)
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(gold)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(gold.opacity(colorScheme == .dark ? 0.18 : 0.12)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(suggestion.label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Suggested by your calendar gaps + energy curve. Open a habit to schedule it for then.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(gold.opacity(colorScheme == .dark ? 0.10 : 0.07))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(gold.opacity(0.35), lineWidth: 0.5)
+        )
+    }
 
     @ViewBuilder
     private func headerSection(snapshot: SleepSnapshot, forecast: EnergyForecast) -> some View {
@@ -474,6 +516,7 @@ private struct EnergyGauge: View {
 /// actual schedule instead of using a clock-time default.
 private struct EnergyCurveChart: View {
     let forecast: EnergyForecast
+    var suggestion: HabitTimeSuggestion.Suggestion? = nil
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -575,6 +618,20 @@ private struct EnergyCurveChart: View {
                         .position(nowPoint)
                 }
 
+                // Calendar-aware "best slot" marker. Sits above the
+                // curve at the suggested time so the user can see why
+                // we chose that hour — it's at (or near) their peak.
+                // Gold = brand colour, distinguishes from indigo "now".
+                if let suggestion, safeRange.contains(suggestion.time) {
+                    let energy = forecast.energy(at: suggestion.time)
+                    let point = pointFor(
+                        sample: (suggestion.time, energy),
+                        in: geo.size,
+                        range: safeRange
+                    )
+                    suggestionAnnotation(at: point)
+                }
+
                 // X-axis labels: wake / mid / peak / bed instead of a
                 // generic clock-time set, so the chart anchors to the
                 // user's actual day.
@@ -604,6 +661,34 @@ private struct EnergyCurveChart: View {
                 .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
         }
         .position(x: point.x, y: max(point.y - 14, 14))
+    }
+
+    private func suggestionAnnotation(at point: CGPoint) -> some View {
+        let gold = Color(red: 0.94, green: 0.74, blue: 0.24)
+        return VStack(spacing: 3) {
+            HStack(spacing: 3) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 8, weight: .bold))
+                Text("Best slot")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .foregroundStyle(gold)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(gold.opacity(colorScheme == .dark ? 0.22 : 0.16))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(gold.opacity(0.45), lineWidth: 0.5)
+            )
+            Circle()
+                .fill(gold)
+                .frame(width: 8, height: 8)
+                .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.2))
+        }
+        .position(x: point.x, y: max(point.y - 16, 16))
     }
 
     private func pointFor(

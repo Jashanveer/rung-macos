@@ -27,9 +27,22 @@ struct CenterPanel: View {
     /// greeting. The pill replaces the older purple `CalendarInsightsBanner`
     /// — same data, far less visual weight.
     @StateObject private var calendarService = CalendarService.shared
+    @StateObject private var sleepService = SleepInsightsService.shared
 
     @State private var aiGreeting: String?
     @State private var hasRequestedGreeting = false
+
+    /// Calendar-aware "best time today" suggestion. Recomputed each
+    /// render using the live forecast + today's events; cheap because
+    /// the algorithm is pure (no HK fetch). Hidden when there's no
+    /// good slot left in the day.
+    private var timeSuggestion: HabitTimeSuggestion.Suggestion? {
+        guard !pendingHabits.isEmpty else { return nil }
+        return HabitTimeSuggestion.suggest(
+            events: calendarService.todaysEvents,
+            forecast: sleepService.forecast
+        )
+    }
 
     private var pendingHabits: [Habit] {
         if isFrozenToday { return habits }
@@ -114,6 +127,11 @@ struct CenterPanel: View {
                 Spacer()
             } else {
                 ScrollView {
+                    if let suggestion = timeSuggestion {
+                        SuggestedTimePill(suggestion: suggestion)
+                            .frame(maxWidth: 520)
+                            .padding(.bottom, 4)
+                    }
                     HabitListSection(
                         habits: pendingHabits,
                         todayKey: todayKey,
@@ -234,6 +252,44 @@ struct CenterPanel: View {
 
         Reply with only the sentence — no quotes, no preamble.
         """
+    }
+}
+
+// MARK: - Suggested Time Pill
+
+/// Calendar-aware suggestion banner. Sits above the pending-habit list
+/// so users see "do this around 10:30 AM — your peak focus window"
+/// before they even pick a habit. Computed in `CenterPanel.timeSuggestion`
+/// from today's calendar gaps + the user's energy curve; hidden when no
+/// good slot is left in the day.
+private struct SuggestedTimePill: View {
+    let suggestion: HabitTimeSuggestion.Suggestion
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var gold: Color { Color(red: 0.94, green: 0.74, blue: 0.24) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(gold)
+            Text(suggestion.label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(gold.opacity(colorScheme == .dark ? 0.14 : 0.10))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(gold.opacity(0.36), lineWidth: 0.5)
+        )
+        .accessibilityLabel(suggestion.label)
     }
 }
 

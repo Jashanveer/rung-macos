@@ -98,6 +98,7 @@ struct SettingsPanel: View {
                 if mode == .combined {
                     TimeRemindersCard(
                         habits: habits,
+                        backend: backend,
                         onReminderChange: onReminderChange
                     )
                 }
@@ -107,6 +108,7 @@ struct SettingsPanel: View {
 
                     TimeRemindersCard(
                         habits: habits,
+                        backend: backend,
                         onReminderChange: onReminderChange
                     )
 
@@ -1007,9 +1009,11 @@ struct SettingsMetric: View {
 
 struct TimeRemindersCard: View {
     let habits: [Habit]
+    @ObservedObject var backend: HabitBackendStore
     let onReminderChange: (Habit, HabitReminderWindow?) -> Void
 
     @State private var isExpanded = false
+    @State private var richEditorHabit: Habit?
 
     private static let collapsedLimit = 3
 
@@ -1058,7 +1062,8 @@ struct TimeRemindersCard: View {
                     ForEach(visibleHabits) { habit in
                         HabitTimeReminderRow(
                             habit: habit,
-                            onReminderChange: onReminderChange
+                            onReminderChange: onReminderChange,
+                            onMoreOptions: { richEditorHabit = habit }
                         )
                     }
                 }
@@ -1095,20 +1100,45 @@ struct TimeRemindersCard: View {
             shape: RoundedRectangle(cornerRadius: 14, style: .continuous),
             level: .control
         )
+        .sheet(isPresented: Binding(
+            get: { richEditorHabit != nil },
+            set: { if !$0 { richEditorHabit = nil } }
+        )) {
+            if let habit = richEditorHabit {
+                HabitRemindersSheet(habit: habit, backend: backend)
+            }
+        }
     }
 }
 
 private struct HabitTimeReminderRow: View {
     let habit: Habit
     let onReminderChange: (Habit, HabitReminderWindow?) -> Void
+    let onMoreOptions: () -> Void
 
     @State private var selectedWindow: HabitReminderWindow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(habit.title)
-                .font(.caption.weight(.medium))
-                .lineLimit(1)
+            HStack {
+                Text(habit.title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                Spacer()
+                // Doorway to richer per-habit reminder rules (multiple
+                // times, location, after-calendar-event, energy-peak).
+                // The legacy bucket picker below stays for users who
+                // just want morning/afternoon/evening.
+                Button(action: onMoreOptions) {
+                    HStack(spacing: 3) {
+                        Text("More")
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
 
             HStack(spacing: 6) {
                 TimeReminderOptionButton(

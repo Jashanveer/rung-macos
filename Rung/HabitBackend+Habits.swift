@@ -4,6 +4,32 @@ import SwiftData
 
 extension HabitBackendStore {
 
+    // MARK: - Reminders (per-habit rich reminder list)
+
+    /// Loads every reminder for `habitID`. Errors propagate so callers
+    /// can show a per-screen failure state. The legacy
+    /// `Habit.reminderWindow` column is independent of these — they
+    /// coexist until clients fully migrate.
+    func listHabitReminders(habitID: Int64) async throws -> [HabitReminder] {
+        try await habitRepository.listReminders(habitID: habitID)
+    }
+
+    /// Creates a new reminder, returns the persisted record.
+    func createHabitReminder(habitID: Int64, reminder: HabitReminder) async throws -> HabitReminder {
+        try await habitRepository.createReminder(habitID: habitID, reminder: reminder)
+    }
+
+    /// Updates an existing reminder. The `id` on `reminder` must match
+    /// `reminderID`; the parameter is split out so the call site reads
+    /// like the URL.
+    func updateHabitReminder(habitID: Int64, reminderID: Int64, reminder: HabitReminder) async throws -> HabitReminder {
+        try await habitRepository.updateReminder(habitID: habitID, reminderID: reminderID, reminder: reminder)
+    }
+
+    func deleteHabitReminder(habitID: Int64, reminderID: Int64) async throws {
+        try await habitRepository.deleteReminder(habitID: habitID, reminderID: reminderID)
+    }
+
     // MARK: - Habits (cache-aware)
 
     func listHabits() async throws -> [BackendHabit] {
