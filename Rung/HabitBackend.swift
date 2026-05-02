@@ -399,6 +399,7 @@ final class HabitBackendStore: ObservableObject {
     let deviceRepository: DeviceRepository
     let preferencesRepository: PreferencesRepository
     let sleepSnapshotRepository: SleepSnapshotRepository
+    let circleRepository: CircleRepository
     /// Shared response cache; invalidated by any write that mutates the cached resource.
     let responseCache = ResponseCache()
     var streamTask: Task<Void, Never>?
@@ -508,6 +509,7 @@ final class HabitBackendStore: ObservableObject {
         deviceRepository          = DeviceRepository(client: client)
         preferencesRepository     = PreferencesRepository(client: client)
         sleepSnapshotRepository   = SleepSnapshotRepository(client: client)
+        circleRepository          = CircleRepository(client: client)
 
         // Cold launch with a previously-saved session: open the per-user
         // SSE stream so cross-device sync works on app relaunches, not

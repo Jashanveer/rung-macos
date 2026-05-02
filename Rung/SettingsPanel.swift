@@ -79,6 +79,8 @@ struct SettingsPanel: View {
                 if mode == .friends || mode == .combined {
                     SocialSummaryCard(metrics: metrics, dashboard: backend.dashboard)
 
+                    CirclesEntryCard(backend: backend)
+
                     SocialFeedCard(dashboard: backend.dashboard)
 
                     FriendSuggestionsCard(

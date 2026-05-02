@@ -344,6 +344,68 @@ struct HabitRepository {
     private struct EmptyResponse: Decodable {}
 }
 
+/// Networking client for accountability circles (V18). Each method
+/// maps 1:1 to a `CircleController` endpoint on the backend.
+struct CircleRepository {
+    let client: BackendAPIClient
+
+    func listMine() async throws -> [AccountabilityCircle] {
+        try await client.authorizedRequest(path: "/api/circles", method: "GET")
+    }
+
+    func listPublic() async throws -> [AccountabilityCircle] {
+        try await client.authorizedRequest(path: "/api/circles/public", method: "GET")
+    }
+
+    func dashboard(circleID: Int64) async throws -> CircleDashboard {
+        try await client.authorizedRequest(path: "/api/circles/\(circleID)", method: "GET")
+    }
+
+    func create(
+        name: String,
+        description: String?,
+        visibility: AccountabilityCircle.Visibility,
+        verifiedOnly: Bool
+    ) async throws -> AccountabilityCircle {
+        try await client.authorizedRequest(
+            path: "/api/circles",
+            method: "POST",
+            body: CreateCircleRequest(
+                name: name,
+                description: description,
+                visibility: visibility.rawValue,
+                verifiedOnly: verifiedOnly
+            )
+        )
+    }
+
+    func join(circleID: Int64, joinCode: String?) async throws -> AccountabilityCircle {
+        try await client.authorizedRequest(
+            path: "/api/circles/\(circleID)/join",
+            method: "POST",
+            body: JoinCircleRequest(joinCode: joinCode)
+        )
+    }
+
+    func leave(circleID: Int64) async throws {
+        let _: EmptyResponse = try await client.authorizedRequest(
+            path: "/api/circles/\(circleID)/leave",
+            method: "POST"
+        )
+    }
+
+    private struct CreateCircleRequest: Encodable {
+        let name: String
+        let description: String?
+        let visibility: String
+        let verifiedOnly: Bool
+    }
+    private struct JoinCircleRequest: Encodable {
+        let joinCode: String?
+    }
+    private struct EmptyResponse: Decodable {}
+}
+
 struct DeviceRepository {
     let client: BackendAPIClient
 

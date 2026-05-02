@@ -27,21 +27,25 @@ struct HabitReminder: Codable, Identifiable, Hashable {
     /// off without losing their schedule.
     var enabled: Bool
 
+    /// Wire-format raw values match the backend's `HabitReminderKind`
+    /// enum (V18 Spring Boot service): UPPER_SNAKE_CASE strings. iOS
+    /// keeps Swift-friendly case names internally and bridges via the
+    /// rawValue mapping declared here.
     enum Kind: String, Codable, CaseIterable, Identifiable {
         /// One or more wall-clock times. `payload` is a comma-separated
         /// "HH:mm" list, e.g. `"08:00,14:00"`.
-        case timeOfDay
+        case timeOfDay = "TIME_OF_DAY"
         /// Geofenced reminder. `payload` is an opaque identifier the
         /// client maps to a saved location (we don't store coordinates
         /// server-side — privacy + no reverse-geocode round-trip).
-        case location
+        case location = "LOCATION"
         /// Fires after a calendar event ends. `payload` is either an
         /// EventKit identifier or a category keyword like "meeting".
-        case afterCalendarEvent
+        case afterCalendarEvent = "AFTER_CALENDAR_EVENT"
         /// Fires when the user's energy curve hits a peak (or trough,
         /// per `payload`). Drives the "remind me when energy is high"
         /// product story — combines `EnergyForecast` + a notification.
-        case energyPeak
+        case energyPeak = "ENERGY_PEAK"
 
         var id: String { rawValue }
 
