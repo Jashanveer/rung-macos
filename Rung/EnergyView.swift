@@ -693,6 +693,14 @@ private struct EnergyCurveChart: View {
                 // Annotated windows — Focus, Move, Wind-down. Each one
                 // sits on the curve at the energy level for that time so
                 // the badge feels glued to the line rather than floating.
+                // Wind-down nudges down when it's at the same x as the
+                // DLMO marker so the two labels don't pile on top of
+                // each other in the top-right corner.
+                let dlmoX = pointFor(
+                    sample: (forecast.predictedDLMO, 0),
+                    in: geo.size,
+                    range: safeRange
+                ).x
                 ForEach(windows.filter { safeRange.contains($0.time) }) { window in
                     let energy = forecast.energy(at: window.time)
                     let point = pointFor(
@@ -700,7 +708,13 @@ private struct EnergyCurveChart: View {
                         in: geo.size,
                         range: safeRange
                     )
-                    annotation(window: window, at: point)
+                    let collidesWithDLMO = window.kind == .windDown
+                        && abs(point.x - dlmoX) < 36
+                    annotation(
+                        window: window,
+                        at: point,
+                        nudgeDown: collidesWithDLMO
+                    )
                 }
 
                 // Now marker — vertical line + filled dot at curve height.
@@ -761,6 +775,14 @@ private struct EnergyCurveChart: View {
                 // curve at the suggested time so the user can see why
                 // we chose that hour — it's at (or near) their peak.
                 // Gold = brand colour, distinguishes from indigo "now".
+                //
+                // Suppressed when the suggested time is within ~30 min
+                // of one of the four window pins (Focus / Recover /
+                // Move / Wind-down). The window label already conveys
+                // "this is your peak / dip / etc." for that time, so
+                // stacking a second pill on the same x makes both
+                // unreadable. The bottom-of-chart suggestion callout
+                // still names the time in plain English either way.
                 if let suggestion, safeRange.contains(suggestion.time) {
                     let energy = forecast.energy(at: suggestion.time)
                     let point = pointFor(
@@ -768,7 +790,12 @@ private struct EnergyCurveChart: View {
                         in: geo.size,
                         range: safeRange
                     )
-                    suggestionAnnotation(at: point)
+                    let collidesWithWindow = windows.contains { window in
+                        abs(window.time.timeIntervalSince(suggestion.time)) < 30 * 60
+                    }
+                    if !collidesWithWindow {
+                        suggestionAnnotation(at: point)
+                    }
                 }
 
                 // X-axis labels: wake / mid / peak / bed instead of a
@@ -779,7 +806,11 @@ private struct EnergyCurveChart: View {
         }
     }
 
-    private func annotation(window: EnergyWindow, at point: CGPoint) -> some View {
+    private func annotation(
+        window: EnergyWindow,
+        at point: CGPoint,
+        nudgeDown: Bool = false
+    ) -> some View {
         VStack(spacing: 3) {
             Text(window.label)
                 .font(.system(size: 9, weight: .bold))
@@ -799,7 +830,14 @@ private struct EnergyCurveChart: View {
                 .frame(width: 7, height: 7)
                 .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
         }
-        .position(x: point.x, y: max(point.y - 14, 14))
+        // When the wind-down annotation lands at the same x as the DLMO
+        // marker (a common case — wind-down sits 90 min before bed,
+        // DLMO sits ~30 min after that), drop the pill below the curve
+        // instead of stacking on the DLMO label at the top of the chart.
+        .position(
+            x: point.x,
+            y: nudgeDown ? min(point.y + 22, point.y + 22) : max(point.y - 14, 14)
+        )
     }
 
     private func suggestionAnnotation(at point: CGPoint) -> some View {

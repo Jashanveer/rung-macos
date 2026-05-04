@@ -829,7 +829,7 @@ struct AuthGateView: View {
             if let asError = error as? ASAuthorizationError, asError.code == .canceled {
                 return
             }
-            backend.errorMessage = "Apple sign-in failed: \(error.localizedDescription)"
+            backend.errorMessage = appleSignInErrorMessage(for: error)
             return
         case .success(let auth):
             guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
@@ -852,6 +852,54 @@ struct AuthGateView: View {
             } else {
                 onAuthFailed?()
             }
+        }
+    }
+
+    /// Translate an `ASAuthorizationError` into something the user can
+    /// actually act on. Apple's default `localizedDescription` for the
+    /// common `.unknown` (1000) is a useless "The operation couldn't
+    /// be completed." — every macOS dev hitting it has the same
+    /// triage path: sign into iCloud, check dev signing, retry after
+    /// a minute. Surface that triage directly.
+    private func appleSignInErrorMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        let asError = error as? ASAuthorizationError
+        let code = asError?.code
+
+        // Most common dev/build cause on macOS — error 1000 is generic
+        // and the localizedDescription is unhelpful. Diagnose for them.
+        if code == .unknown || nsError.code == 1000 {
+            #if os(macOS)
+            return """
+            Sign in with Apple isn't working right now. Common fixes:
+            • Open System Settings → Apple ID and confirm you're signed in.
+            • If running from Xcode, ensure a development team is selected and the build is signed.
+            • Wait a minute and retry — Apple throttles repeated attempts.
+            """
+            #else
+            return """
+            Sign in with Apple isn't working right now. Common fixes:
+            • Open Settings → Sign in to your iPhone and confirm your Apple ID.
+            • Wait a minute and retry — Apple throttles repeated attempts.
+            """
+            #endif
+        }
+
+        switch code {
+        case .invalidResponse:
+            return "Apple returned an unexpected response. Try again in a minute."
+        case .notHandled:
+            return "Sign-in request wasn't handled. Try again, or restart the app."
+        case .failed:
+            return "Apple's sign-in service rejected the request. Make sure you're signed into iCloud and try again."
+        case .notInteractive:
+            return "Sign-in needs an interactive session. Try again with the window in focus."
+        case .credentialImport, .credentialExport:
+            return "Apple sign-in failed during a credential transfer. Try again."
+        case .matchedExcludedCredential:
+            return "This Apple ID is excluded for this app. Use a different account."
+        default:
+            return "Apple sign-in failed: \(error.localizedDescription)"
         }
     }
 
