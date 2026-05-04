@@ -226,6 +226,16 @@ struct ContentView: View {
             guard backend.isAuthenticated else { return }
             Task { await SleepInsightsService.shared.refreshFromBackendOnChange() }
         }
+        // First-time login / token-refresh — the .task above runs ONCE
+        // on view appear, and on a cold launch where the user signs in
+        // a moment later, that initial refresh fires with token=nil and
+        // the energy view sits empty. Retry whenever the token flips
+        // non-nil so macOS picks up the iPhone-uploaded snapshot the
+        // moment auth is ready.
+        .onChange(of: backend.token) { _, newToken in
+            guard newToken != nil else { return }
+            Task { await SleepInsightsService.shared.refreshFromBackendOnChange() }
+        }
         // Server returned 404 for a habit/task/check the local store
         // thought existed (e.g. macOS deleted it while iPhone still had
         // a stale copy). The backend already swallowed the error toast

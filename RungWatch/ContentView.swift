@@ -1,5 +1,6 @@
 import SwiftUI
 import WatchKit
+import AuthenticationServices
 
 /// Root view for the watchOS Rung companion. Six tabs paged vertically by
 /// the Digital Crown — Habits, Calendar, Stats, Friends, Mentor, Account —
@@ -63,16 +64,19 @@ private struct ConnectingView: View {
     @EnvironmentObject private var backend: WatchBackendStore
     @Environment(\.watchFontScale) private var scale: Double
 
+    @State private var signInError: String? = nil
+    @State private var isSigningIn: Bool = false
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 7) {
+            VStack(spacing: 8) {
                 Image(systemName: "applewatch.radiowaves.left.and.right")
-                    .font(.system(size: 28 * scale, weight: .regular))
+                    .font(.system(size: 26 * scale, weight: .regular))
                     .foregroundStyle(WatchTheme.accent)
                     .symbolEffect(.pulse, options: .repeating)
                     .padding(.top, 4)
 
-                Text("Open Rung\non iPhone")
+                Text("Set up Rung")
                     .font(WatchTheme.font(.title, scale: scale, weight: .semibold))
                     .foregroundStyle(WatchTheme.ink)
                     .multilineTextAlignment(.center)
@@ -81,9 +85,26 @@ private struct ConnectingView: View {
                     .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
                     .foregroundStyle(headlineColor)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
 
+                // Primary path: sign in directly on the watch with Apple.
+                // No iPhone reachability required, no WC handshake — the
+                // watch authenticates standalone and starts pulling data
+                // from the backend immediately.
+                signInWithAppleButton
+
+                if let signInError {
+                    Text(signInError)
+                        .font(WatchTheme.font(.label, scale: scale, weight: .medium))
+                        .foregroundStyle(WatchTheme.danger)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+
+                // Secondary path: legacy WC retry (for when iPhone IS
+                // reachable and you'd rather wait than sign in again).
                 retryButton
-
                 diagnosticBlock
             }
             .padding(.horizontal, 12)
@@ -103,6 +124,66 @@ private struct ConnectingView: View {
                 if Task.isCancelled { return }
                 if session.hasReceivedRealData { return }
                 session.requestSnapshot()
+            }
+        }
+    }
+
+    private var signInWithAppleButton: some View {
+        SignInWithAppleButton(
+            .signIn,
+            onRequest: { request in
+                request.requestedScopes = [.fullName, .email]
+            },
+            onCompletion: { result in
+                handleAppleSignIn(result)
+            }
+        )
+        .signInWithAppleButtonStyle(.white)
+        .frame(height: 44)
+        .clipShape(Capsule(style: .continuous))
+        .disabled(isSigningIn)
+        .padding(.top, 6)
+    }
+
+    private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .failure(let error):
+            if let asError = error as? ASAuthorizationError, asError.code == .canceled {
+                return
+            }
+            signInError = "Sign-in failed. Try again."
+            print("[Watch] Apple sign-in failed: \(error)")
+        case .success(let authorization):
+            guard
+                let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                let tokenData = credential.identityToken,
+                let identityToken = String(data: tokenData, encoding: .utf8)
+            else {
+                signInError = "Apple didn't return a token."
+                return
+            }
+            let displayName: String? = {
+                guard let components = credential.fullName else { return nil }
+                let formatter = PersonNameComponentsFormatter()
+                let formatted = formatter.string(from: components).trimmingCharacters(in: .whitespaces)
+                return formatted.isEmpty ? nil : formatted
+            }()
+            isSigningIn = true
+            signInError = nil
+            Task {
+                defer { isSigningIn = false }
+                do {
+                    let client = WatchBackendClient()
+                    let auth = try await client.exchangeAppleToken(
+                        identityToken: identityToken,
+                        displayName: displayName
+                    )
+                    await backend.acceptAuthResult(auth)
+                    WKInterfaceDevice.current().play(.success)
+                } catch {
+                    signInError = "Backend rejected sign-in. Check your connection."
+                    print("[Watch] Backend Apple auth failed: \(error)")
+                }
             }
         }
     }

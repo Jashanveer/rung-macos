@@ -32,6 +32,19 @@ final class WatchConnectivityService: NSObject {
     private var pendingPushTimer: Timer?
     private var lastPushedJSON: Data?
 
+    /// Thread-safe snapshot of the most recently encoded WatchSnapshot
+    /// JSON. The WCSessionDelegate `didReceiveMessage:replyHandler:`
+    /// callback fires on a background queue and must invoke the reply
+    /// handler as quickly as possible — Apple's 60-second timeout is
+    /// real and a queued main-actor hop can blow past it on a busy
+    /// device, surfacing as `WCErrorCodeTransferTimedOut` on the watch.
+    /// We update this whenever we encode a snapshot and read from it
+    /// synchronously in the reply path. Lock is uncontended in practice
+    /// (writes happen from MainActor pushes; reads happen from the WC
+    /// delegate queue).
+    nonisolated private let cachedSnapshotLock = NSLock()
+    nonisolated(unsafe) private var cachedSnapshotData: Data?
+
     /// Observes `HabitAITimeAdvisor` so a freshly-resolved AI suggestion
     /// triggers a snapshot re-push to the watch — the per-habit chip
     /// stays consistent with iOS within a beat of the LLM landing.
@@ -55,6 +68,11 @@ final class WatchConnectivityService: NSObject {
     /// Safe to call once at app launch — additional calls are no-ops.
     func start(container: ModelContainer) {
         self.modelContainer = container
+        // Eagerly seed the synchronous-reply cache so the first watch
+        // sendMessage after iPhone wake-up doesn't get an empty reply.
+        // Reading SwiftData here on MainActor is safe — start() is
+        // called from RungApp.init.
+        _ = currentSnapshotPayload()
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         if session.delegate !== self {
@@ -199,7 +217,14 @@ final class WatchConnectivityService: NSObject {
     private func encodedSnapshotData(_ snapshot: WatchSnapshot) -> Data? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        return try? encoder.encode(snapshot)
+        let data = try? encoder.encode(snapshot)
+        if let data {
+            // Stash for the synchronous reply path — see `cachedSnapshotData`.
+            cachedSnapshotLock.lock()
+            cachedSnapshotData = data
+            cachedSnapshotLock.unlock()
+        }
+        return data
     }
 
     private func currentSnapshotPayload() -> [String: Any]? {
@@ -210,11 +235,22 @@ final class WatchConnectivityService: NSObject {
         return ["snapshot": data]
     }
 
-    private func replyPayload(for message: [String: Any]) -> [String: Any] {
-        guard (message[WatchMessageKey.action] as? String) == WatchMessageAction.requestSnapshot,
-              let payload = currentSnapshotPayload()
-        else { return [:] }
-        return payload
+    /// Synchronous reply payload for `didReceiveMessage:replyHandler:`.
+    /// Reads the most recent encoded snapshot from `cachedSnapshotData`
+    /// — never touches MainActor or SwiftData. Returns an empty dict
+    /// when no snapshot has ever been encoded (first ever request from
+    /// a watch attached before iPhone Rung has launched at least once).
+    /// `nonisolated` so the WC delegate queue can call it without a
+    /// main-actor hop.
+    nonisolated private func cachedReplyPayload(for message: [String: Any]) -> [String: Any] {
+        guard (message[WatchMessageKey.action] as? String) == WatchMessageAction.requestSnapshot else {
+            return [:]
+        }
+        cachedSnapshotLock.lock()
+        let data = cachedSnapshotData
+        cachedSnapshotLock.unlock()
+        guard let data else { return [:] }
+        return ["snapshot": data]
     }
 
     // MARK: - Snapshot builder
@@ -713,26 +749,28 @@ extension WatchConnectivityService: WCSessionDelegate {
     /// Reply-handler variant of didReceiveMessage. Critical: the watch
     /// calls `sendMessage(_, replyHandler:, errorHandler:)`, which means
     /// WCSession holds the message open expecting *us* to invoke the
-    /// reply handler. If we only implemented the no-reply delegate
-    /// (above), the watch's reply waited indefinitely until WCSession
-    /// gave up with `WCErrorCodeTransferTimedOut` — exactly the
-    /// "Transfer timed out · Retry · 53" state the user reported on the
-    /// connecting view despite STATE/REACH/PAIR all reading green.
+    /// reply handler. If the reply takes longer than ~60 seconds the
+    /// watch sees `WCErrorCodeTransferTimedOut`.
     ///
-    /// We reply immediately; `requestSnapshot` replies with a fresh encoded
-    /// snapshot, while mutations get a lightweight ack. The same `applyMessage`
-    /// handler still runs afterward so durable applicationContext / userInfo
-    /// delivery is refreshed too.
+    /// Previous implementation wrapped the reply inside
+    /// `Task { @MainActor in ... }`. On a busy device — SwiftData
+    /// boot, view updates, network calls all queued — the main actor
+    /// can take many seconds to schedule that closure, blowing past
+    /// the timeout. The fix is to reply SYNCHRONOUSLY from the
+    /// delegate queue using a thread-safe cache of the last encoded
+    /// snapshot, then process the message body asynchronously. The
+    /// watch sees a fresh reply within milliseconds; the durable
+    /// applicationContext / userInfo channels still deliver any state
+    /// that lagged behind.
     nonisolated func session(_ session: WCSession,
                               didReceiveMessage message: [String : Any],
                               replyHandler: @escaping ([String : Any]) -> Void) {
+        // Reply right now from the cached payload — runs on the WC
+        // delegate queue, no actor hops, no SwiftData fetches. Even
+        // an empty reply is better than a 60-second timeout.
+        replyHandler(self.cachedReplyPayload(for: message))
+        // Process the actual message + push fresh data on MainActor.
         Task { @MainActor in
-            // Reply FIRST so the watch's sendMessage promise resolves before
-            // we do any of the longer SwiftData / network work. For
-            // `requestSnapshot`, include the snapshot in the reply itself so
-            // the watch can leave the connecting screen even if the follow-up
-            // applicationContext delivery is delayed by watchOS.
-            replyHandler(self.replyPayload(for: message))
             self.applyMessage(message)
         }
     }

@@ -113,4 +113,19 @@ final class WatchBackendStore: ObservableObject {
             lastError = error.localizedDescription
         }
     }
+
+    /// Persist tokens after a successful Apple sign-in completed
+    /// directly on the watch. Triggers an immediate snapshot fetch so
+    /// the connecting view can flip to the populated tabs without a
+    /// poll-cycle wait. This is the path that makes the watch genuinely
+    /// independent — when WC is broken, the user can sign in on the
+    /// watch with their Apple ID and never need to open Rung on iPhone.
+    func acceptAuthResult(_ result: WatchBackendClient.AuthResult) async {
+        WatchAuthStore.shared.set(
+            accessToken: result.accessToken,
+            expiresAtEpoch: result.accessTokenExpiresAtEpochSeconds.map { TimeInterval($0) },
+            refreshToken: result.refreshToken
+        )
+        await fetchOnce()
+    }
 }

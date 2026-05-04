@@ -113,4 +113,57 @@ struct WatchBackendClient {
         let payload: String
         let updatedAt: Date
     }
+
+    // MARK: - Apple sign-in (standalone watchOS auth)
+
+    /// Exchange an Apple identity token for a Rung session — same
+    /// `/api/auth/apple` endpoint the iOS app uses. The backend
+    /// validates against Apple's JWKS and either links or provisions
+    /// the account, returning the access + refresh tokens we persist
+    /// in `WatchAuthStore`. This is the path that lets the watch
+    /// authenticate without ever depending on a reachable iPhone —
+    /// breaks the chicken-and-egg the WC auth handoff has.
+    func exchangeAppleToken(
+        identityToken: String,
+        displayName: String?
+    ) async throws -> AuthResult {
+        var request = URLRequest(url: Self.baseURL.appendingPathComponent("api/auth/apple"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let body = AppleLoginRequest(identityToken: identityToken, displayName: displayName)
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw Error.transport(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw Error.http(-1)
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw Error.http(http.statusCode)
+        }
+        do {
+            return try decoder.decode(AuthResult.self, from: data)
+        } catch {
+            throw Error.decode(error)
+        }
+    }
+
+    private struct AppleLoginRequest: Encodable {
+        let identityToken: String
+        let displayName: String?
+    }
+
+    /// Decoded backend response — mirror of `BackendAuthTokens` on iOS.
+    struct AuthResult: Decodable {
+        let accessToken: String
+        let refreshToken: String?
+        let accessTokenExpiresAtEpochSeconds: Int64?
+    }
 }
