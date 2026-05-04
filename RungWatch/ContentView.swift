@@ -13,7 +13,13 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if session.hasReceivedRealData {
+            // Show tabs the moment we have *any* data — cached from a
+            // prior session, freshly pushed via WC, or (future) fetched
+            // straight from the backend. The "Open Rung on iPhone" view
+            // only renders for the first-ever cold launch when nothing
+            // has ever been received, so a paired-but-unreachable phone
+            // doesn't leave the watch staring at a stuck screen.
+            if session.hasReceivedRealData, !session.snapshot.account.handle.isEmpty {
                 tabs
             } else {
                 ConnectingView()
@@ -54,6 +60,7 @@ struct ContentView: View {
 /// registered.
 private struct ConnectingView: View {
     @EnvironmentObject private var session: WatchSession
+    @EnvironmentObject private var backend: WatchBackendStore
     @Environment(\.watchFontScale) private var scale: Double
 
     var body: some View {
@@ -101,23 +108,40 @@ private struct ConnectingView: View {
     }
 
     private var headlineStatus: String {
+        // Backend channel is the primary path now. If we have a token,
+        // surface the network status; otherwise fall back to WC copy.
+        if WatchAuthStore.shared.current() == nil {
+            return "Open Rung on iPhone once to set up sync"
+        }
+        if backend.isFetching {
+            return "Syncing from backend…"
+        }
+        if let err = backend.lastError {
+            return err
+        }
         if !session.diagnostic.isCompanionAppInstalled {
-            return "iPhone Rung not detected"
+            return "Backend OK · iPhone Rung not detected"
         }
         if session.isReachable {
             return "Paired · waiting for data"
         }
-        return "Phone unreachable · queuing"
+        return "Backend offline · trying again"
     }
 
     private var headlineColor: Color {
-        session.isReachable ? WatchTheme.inkSoft : WatchTheme.warning
+        if backend.lastError == nil { return WatchTheme.inkSoft }
+        return WatchTheme.warning
     }
 
     private var retryButton: some View {
         Button {
             WKInterfaceDevice.current().play(.click)
+            // Race the WC channel + the backend channel — whichever
+            // comes back first wins. The user's tap is registered
+            // immediately on the WC counter; backend retry runs in the
+            // background.
             session.requestSnapshot()
+            Task { await backend.refreshNow() }
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.clockwise")
@@ -174,9 +198,11 @@ private struct ConnectingView: View {
 #Preview("Loaded") {
     ContentView()
         .environmentObject(WatchSession.preview(hasRealData: true, snapshot: .previewSample()))
+        .environmentObject(WatchBackendStore.shared)
 }
 #Preview("Connecting") {
     ContentView()
         .environmentObject(WatchSession.preview(hasRealData: false))
+        .environmentObject(WatchBackendStore.shared)
 }
 #endif

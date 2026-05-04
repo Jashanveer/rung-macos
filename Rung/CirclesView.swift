@@ -7,6 +7,7 @@ import SwiftUI
 struct CirclesView: View {
     @ObservedObject var backend: HabitBackendStore
 
+    @Environment(\.dismiss) private var dismiss
     @State private var myCircles: [AccountabilityCircle] = []
     @State private var publicCircles: [AccountabilityCircle] = []
     @State private var isLoading = true
@@ -17,60 +18,21 @@ struct CirclesView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if let loadError {
-                    Section {
-                        Text(loadError)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section {
-                    if myCircles.isEmpty {
-                        Text("You're not in any circles yet. Create one or join with a code.")
-                            .foregroundStyle(.secondary)
-                            .font(.subheadline)
-                            .padding(.vertical, 4)
-                    } else {
-                        ForEach(myCircles) { circle in
-                            Button {
-                                selectedCircle = circle
-                            } label: {
-                                CircleSummaryRow(circle: circle)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                } header: {
-                    Text("Your circles")
-                } footer: {
-                    Text("Small private groups where the leaderboard means something — verified-only circles disqualify self-report checks.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                if !publicCircles.isEmpty {
-                    Section("Discover") {
-                        ForEach(publicCircles.prefix(5)) { circle in
-                            Button {
-                                selectedCircle = circle
-                            } label: {
-                                CircleSummaryRow(circle: circle)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+            Group {
+                if myCircles.isEmpty {
+                    emptyState
+                } else {
+                    populatedList
                 }
             }
-            #if os(iOS)
-            .listStyle(.insetGrouped)
-            #endif
             .navigationTitle("Circles")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button {
@@ -111,7 +73,92 @@ struct CirclesView: View {
                 }
             }
         }
+        #if os(macOS)
+        .frame(minWidth: 480, idealWidth: 540, minHeight: 620, idealHeight: 720)
+        #endif
+        .dismissOnSessionExpired()
         .task { await load() }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if let loadError {
+                    Text(loadError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.red.opacity(0.10))
+                        )
+                }
+
+                EmptyCirclesExplainer(
+                    onCreate: { showingCreate = true },
+                    onJoin:   { showingJoin = true }
+                )
+
+                if !publicCircles.isEmpty {
+                    DiscoverSection(circles: Array(publicCircles.prefix(5))) { circle in
+                        selectedCircle = circle
+                    }
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    @ViewBuilder
+    private var populatedList: some View {
+        List {
+            if let loadError {
+                Section {
+                    Text(loadError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Section {
+                ForEach(myCircles) { circle in
+                    Button {
+                        selectedCircle = circle
+                    } label: {
+                        CircleSummaryRow(circle: circle)
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text("Your circles")
+            } footer: {
+                Text("Small private groups where the leaderboard means something — verified-only circles disqualify self-report checks.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !publicCircles.isEmpty {
+                Section("Discover") {
+                    ForEach(publicCircles.prefix(5)) { circle in
+                        Button {
+                            selectedCircle = circle
+                        } label: {
+                            CircleSummaryRow(circle: circle)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        #endif
     }
 
     private func load() async {
@@ -126,6 +173,146 @@ struct CirclesView: View {
             loadError = "Couldn't load circles — \(error.localizedDescription)"
         }
         isLoading = false
+    }
+}
+
+/// First-run explainer rendered inside the Circles list when the user
+/// has joined zero circles. Replaces the bland one-line "you're not in
+/// any circles" placeholder with a real explanation of what a circle
+/// is, why it's different from the rest of the dashboard, and the two
+/// CTAs (Create / Join) that move them forward.
+private struct EmptyCirclesExplainer: View {
+    let onCreate: () -> Void
+    let onJoin: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "person.3.sequence.fill")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(.tint)
+                    .frame(width: 44, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Circles — your accountability crew")
+                        .font(.system(size: 20, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("A small private group, capped at ~25 people, with its own leaderboard and feed.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                explainerRow(
+                    systemImage: "checkmark.seal.fill",
+                    tint: .green,
+                    title: "Verified-only ranking",
+                    body: "Self-report checks still post to the feed but don't earn rank — keeps the leaderboard honest among friends."
+                )
+                explainerRow(
+                    systemImage: "lock.fill",
+                    tint: .indigo,
+                    title: "Private by default",
+                    body: "You get a join code to share. Hidden from public discovery; nobody outside the circle sees the activity."
+                )
+                explainerRow(
+                    systemImage: "flame.fill",
+                    tint: .orange,
+                    title: "Stakes that mean something",
+                    body: "Smaller than a public feed, more peer-reviewed than a 1:1 mentor. The size that actually changes behaviour."
+                )
+            }
+
+            VStack(spacing: 10) {
+                Button(action: onCreate) {
+                    Label("Create a circle", systemImage: "plus.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+
+                Button(action: onJoin) {
+                    Label("Join with a code", systemImage: "key.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
+
+            Text("Got a code? Tap **Join with a code** and paste it. The owner can copy it from the circle's menu.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+    }
+
+    private func explainerRow(systemImage: String, tint: Color, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(tint.opacity(0.15))
+                )
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                Text(body)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct DiscoverSection: View {
+    let circles: [AccountabilityCircle]
+    let onSelect: (AccountabilityCircle) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("DISCOVER")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+                .kerning(0.4)
+                .padding(.horizontal, 4)
+
+            VStack(spacing: 6) {
+                ForEach(circles) { circle in
+                    Button {
+                        onSelect(circle)
+                    } label: {
+                        CircleSummaryRow(circle: circle)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.primary.opacity(0.04))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 }
 
@@ -228,6 +415,10 @@ private struct CircleDashboardView: View {
                 Text("You won't see new posts from this circle and won't appear in its leaderboard.")
             }
         }
+        #if os(macOS)
+        .frame(minWidth: 480, idealWidth: 540, minHeight: 600, idealHeight: 700)
+        #endif
+        .dismissOnSessionExpired()
         .task { await load() }
     }
 
@@ -368,6 +559,10 @@ private struct CreateCircleSheet: View {
                 }
             }
         }
+        #if os(macOS)
+        .frame(minWidth: 460, idealWidth: 520, minHeight: 480, idealHeight: 560)
+        #endif
+        .dismissOnSessionExpired()
     }
 
     private func create() async {
@@ -433,6 +628,10 @@ private struct JoinCircleSheet: View {
                 }
             }
         }
+        #if os(macOS)
+        .frame(minWidth: 440, idealWidth: 480, minHeight: 320, idealHeight: 380)
+        #endif
+        .dismissOnSessionExpired()
     }
 
     private func join() async {

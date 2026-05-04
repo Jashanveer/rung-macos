@@ -56,7 +56,7 @@ struct PerfectDaysYearView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(displayMode.title)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
-                Text("\(String(year)) · tap a month to zoom")
+                Text(String(year))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

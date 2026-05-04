@@ -53,19 +53,31 @@ final class WatchSession: NSObject, ObservableObject {
 
     private override init() {
         super.init()
+        // Hydrate from the persistent cache before WCSession even tries
+        // to activate. Without this, the connecting view blocks the
+        // whole UI on cold launch — the user sees "Open Rung on iPhone"
+        // for as long as it takes the watch to (re-)negotiate with the
+        // phone, even when we already have a perfectly good snapshot
+        // from the previous session sitting on disk.
+        if let cached = WatchSnapshotCache.load() {
+            self.snapshot = cached
+            self.hasReceivedRealData = !cached.account.handle.isEmpty
+        }
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         session.delegate = self
         session.activate()
+        refreshDiagnostic()
+        ingestCachedApplicationContext(from: session)
     }
 
     #if DEBUG
     /// Build a fully-loaded session for SwiftUI #Previews without touching
     /// `WCSession`. Production code never calls this — `shared` is the only
     /// instance that lives in a real watch process.
-    static func preview(hasRealData: Bool, snapshot: WatchSnapshot = .empty()) -> WatchSession {
+    static func preview(hasRealData: Bool, snapshot: WatchSnapshot? = nil) -> WatchSession {
         let s = WatchSession()
-        s.snapshot = snapshot
+        s.snapshot = snapshot ?? .empty()
         s.hasReceivedRealData = hasRealData
         s.isReachable = hasRealData
         return s
@@ -162,6 +174,7 @@ final class WatchSession: NSObject, ObservableObject {
                 s.activate()
             }
             refreshDiagnostic()
+            ingestCachedApplicationContext(from: s)
         }
         send([WatchMessageKey.action: WatchMessageAction.requestSnapshot])
     }
@@ -218,9 +231,11 @@ final class WatchSession: NSObject, ObservableObject {
             // means a missed retry can never be lost.
             session.sendMessage(
                 payload,
-                replyHandler: { _ in
+                replyHandler: { reply in
                     Task { @MainActor [weak self] in
                         self?.lastSendError = nil
+                        self?.ingest(reply)
+                        self?.refreshDiagnostic()
                     }
                 },
                 errorHandler: { err in
@@ -239,23 +254,64 @@ final class WatchSession: NSObject, ObservableObject {
 
     // MARK: - Snapshot ingestion
 
+    /// Adopt a snapshot fetched directly from the backend by
+    /// `WatchBackendStore`. Only overwrites the live snapshot when the
+    /// backend payload is strictly newer than what's already on screen,
+    /// so a slow server response can never clobber an optimistic toggle
+    /// the user just made. Persists to cache + flips
+    /// `hasReceivedRealData` exactly like a WC push so the existing
+    /// SwiftUI gates work without modification.
+    func acceptBackendSnapshot(_ snap: WatchSnapshot, updatedAt: Date) {
+        // The backend's `updatedAt` is when iPhone last uploaded. The
+        // WC channel's snapshot may be newer (iPhone in the same room),
+        // in which case we leave the live state alone.
+        if snap.generatedAt < self.snapshot.generatedAt {
+            return
+        }
+        self.snapshot = snap
+        self.hasReceivedRealData = !snap.account.handle.isEmpty
+        WatchSnapshotCache.save(snap)
+    }
+
     /// Decode a payload the phone sent and update `snapshot` if it parses.
     /// Centralised so application-context, user-info, and message payloads
-    /// all funnel through one path.
+    /// all funnel through one path. Side-effect: writes the snapshot to
+    /// the persistent cache so the next cold launch shows data
+    /// immediately instead of stalling on "Open Rung on iPhone".
     fileprivate func ingest(_ payload: [String: Any]) {
+        // Auth token handoff. iOS pushes the live token as part of every
+        // snapshot push so the Watch can later refresh on its own and
+        // talk to the backend directly when the phone is in another room.
+        if let token = payload["accessToken"] as? String {
+            WatchAuthStore.shared.set(
+                accessToken: token,
+                expiresAtEpoch: payload["accessTokenExpiresAt"] as? TimeInterval,
+                refreshToken: payload["refreshToken"] as? String
+            )
+        }
         guard let data = payload["snapshot"] as? Data else { return }
         do {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let snap = try decoder.decode(WatchSnapshot.self, from: data)
             self.snapshot = snap
-            self.hasReceivedRealData = true
+            self.hasReceivedRealData = !snap.account.handle.isEmpty
+            // Persist for the next cold launch. Cheap — Codable round-
+            // trip is microseconds — and pays back as instant first-paint
+            // when the watch boots while the phone is unreachable.
+            WatchSnapshotCache.save(snap)
         } catch {
             // Malformed payload — keep the existing snapshot so the UI
             // doesn't flash empty. Log so a paired test surfaces the
             // mismatch.
             print("[WatchSession] decode failed: \(error)")
         }
+    }
+
+    private func ingestCachedApplicationContext(from session: WCSession = .default) {
+        let context = session.receivedApplicationContext
+        guard !context.isEmpty else { return }
+        ingest(context)
     }
 }
 
@@ -272,6 +328,7 @@ extension WatchSession: WCSessionDelegate {
         Task { @MainActor in
             self.isReachable = session.isReachable
             self.refreshDiagnostic()
+            self.ingestCachedApplicationContext(from: session)
             // Kick the phone for a fresh snapshot the first time we activate.
             if state == .activated {
                 self.requestSnapshot()
@@ -283,6 +340,7 @@ extension WatchSession: WCSessionDelegate {
         Task { @MainActor in
             self.isReachable = session.isReachable
             self.refreshDiagnostic()
+            self.ingestCachedApplicationContext(from: session)
             // The iPhone just came online — ask for fresh data immediately
             // in case the Connecting view is currently visible.
             if session.isReachable, !self.hasReceivedRealData {
@@ -300,6 +358,20 @@ extension WatchSession: WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession,
                               didReceiveMessage message: [String: Any]) {
+        Task { @MainActor in
+            self.ingest(message)
+        }
+    }
+
+    /// Symmetric ack for any sendMessage-with-reply that the iPhone might
+    /// fire at us in future. Currently the iPhone uses fire-and-forget
+    /// sendMessage for its snapshot pushes, but if that ever changes we
+    /// don't want the iPhone to mirror the same `WCErrorCodeTransferTimedOut`
+    /// problem we just fixed on the iPhone side. Reply FIRST, then ingest.
+    nonisolated func session(_ session: WCSession,
+                              didReceiveMessage message: [String: Any],
+                              replyHandler: @escaping ([String: Any]) -> Void) {
+        replyHandler([:])
         Task { @MainActor in
             self.ingest(message)
         }

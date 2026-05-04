@@ -50,6 +50,52 @@ struct SleepSnapshotRepository {
     }
 }
 
+// MARK: - Watch snapshot
+
+/// Opaque payload + server timestamp the watch fetches to render
+/// without depending on a reachable iPhone. The body is the same
+/// `WatchSnapshot` JSON the iPhone ships over WatchConnectivity.
+struct BackendWatchSnapshot: Codable, Equatable {
+    let payload: String
+    let updatedAt: Date
+}
+
+private struct BackendWatchSnapshotUpload: Encodable {
+    let payload: String
+}
+
+struct WatchSnapshotRepository {
+    let client: BackendAPIClient
+
+    /// Push the iPhone-built `WatchSnapshot` to the backend so the watch
+    /// can fetch it directly when iPhone is unreachable. The payload is
+    /// just the base64 / utf-8 JSON of the snapshot — the server stores
+    /// it opaquely and the watch decodes it.
+    @discardableResult
+    func upload(payload: String) async throws -> BackendWatchSnapshot {
+        try await client.authorizedRequest(
+            path: "/api/watch/snapshot",
+            method: "POST",
+            body: BackendWatchSnapshotUpload(payload: payload)
+        )
+    }
+
+    /// Fetch the most recent snapshot uploaded by iPhone. Returns nil
+    /// when the server has no row yet (204 No Content) — the watch
+    /// shows its first-launch onboarding view in that case.
+    func fetch() async throws -> BackendWatchSnapshot? {
+        do {
+            let snap: BackendWatchSnapshot = try await client.authorizedRequest(
+                path: "/api/watch/snapshot",
+                method: "GET"
+            )
+            return snap
+        } catch HabitBackendError.invalidResponse {
+            return nil
+        }
+    }
+}
+
 // MARK: - Error
 
 enum HabitBackendError: LocalizedError {

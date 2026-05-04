@@ -35,5 +35,13 @@
     <false/>
     <key>WKCompanionAppBundleIdentifier</key>
     <string>jashanveer.Rung</string>
+    <key>WKBackgroundModes</key>
+    <array>
+        <string>workout-processing</string>
+    </array>
+    <key>NSHealthShareUsageDescription</key>
+    <string>Rung reads heart rate and workout data on your watch so it can verify cardio habits the moment you finish, without you having to tap.</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>Rung saves the workouts you start from the watch into Apple Health so the iPhone app can credit them automatically.</string>
 </dict>
 </plist>

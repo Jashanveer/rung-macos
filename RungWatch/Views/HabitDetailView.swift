@@ -15,10 +15,22 @@ struct HabitDetailView: View {
     @State private var localUnits: Int = 0
     @State private var lastTickedUnits: Int = 0
     @State private var ringPulse: Bool = false
+    /// `true` once the user taps "Start workout" — drives the
+    /// `NavigationLink` push into `WatchWorkoutView`. Bound state instead
+    /// of NavigationLink(value:) because we want to fire-and-forget the
+    /// HK request as soon as the link activates, not after navigation.
+    @State private var presentWorkout: Bool = false
 
     private var target: Int { max(habit.unitsTarget, 1) }
     private var ringFraction: Double {
         min(1.0, Double(localUnits) / Double(target))
+    }
+
+    /// True when this habit's canonical key maps to a watchOS-supported
+    /// `HKWorkoutActivityType`. Drives the "Start workout" CTA so chores
+    /// and contemplative rows still get the original crown counter.
+    private var supportsWorkout: Bool {
+        WatchWorkoutController.supports(canonicalKey: habit.canonicalKey)
     }
 
     var body: some View {
@@ -63,10 +75,45 @@ struct HabitDetailView: View {
             }
             .frame(width: 88, height: 88)
 
-            Text("\u{21BB} crown to log +1")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(WatchTheme.gold)
-                .padding(.top, 2)
+            if supportsWorkout {
+                // Cardio / strength canonical — kick off a real
+                // HKWorkoutSession so the saved workout auto-verifies the
+                // habit on iPhone. Crown still works as a manual fallback
+                // beneath the button.
+                NavigationLink(isActive: $presentWorkout) {
+                    WatchWorkoutView(habit: habit)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill")
+                        Text("Start workout")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(WatchTheme.brandGradient)
+                    )
+                }
+                .buttonStyle(.plain)
+                .simultaneousGesture(TapGesture().onEnded {
+                    Task {
+                        await WatchWorkoutController.shared.start(canonicalKey: habit.canonicalKey ?? "workout")
+                    }
+                })
+                .padding(.top, 4)
+
+                Text("\u{21BB} crown to log +1 manually")
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .foregroundStyle(WatchTheme.inkSoft)
+                    .padding(.top, 2)
+            } else {
+                Text("\u{21BB} crown to log +1")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(WatchTheme.gold)
+                    .padding(.top, 2)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 11)

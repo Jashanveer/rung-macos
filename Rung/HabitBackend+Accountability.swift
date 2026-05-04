@@ -32,6 +32,32 @@ extension HabitBackendStore {
         refreshSyncingState()
     }
 
+    /// Fire-and-forget recovery-freeze probe. Backend gates on the
+    /// user's stored sleep snapshot (debt ≥ 4 h) and a 20 h cooldown,
+    /// so calling this on every cold launch / foreground transition is
+    /// safe — at most one freeze gets granted per recovery window.
+    /// On grant, surfaces a toast via `recoveryFreezeJustGranted` so
+    /// the dashboard can flash "rest day — freeze added" once and move
+    /// on. Quiet failure on network / not-fatigued / cooldown.
+    @MainActor
+    func requestRecoveryFreezeIfFatigued() async {
+        guard token != nil else { return }
+        let beforeCount = dashboard?.rewards.freezesAvailable ?? 0
+        do {
+            let value = try await accountabilityRepository.recoveryFreeze()
+            await responseCache.cacheDashboard(value)
+            applyDashboardUpdate(value)
+            let afterCount = value.rewards.freezesAvailable
+            if afterCount > beforeCount {
+                recoveryFreezeJustGranted = true
+                statusMessage = "Rest day — we added a freeze. You're under-slept; protect the streak."
+            }
+        } catch {
+            // Quiet — endpoint is best-effort and the body of the
+            // dashboard request handles the real error UX.
+        }
+    }
+
     // MARK: - Accountability (write methods always invalidate dashboard cache)
 
     func assignMentor() async {

@@ -44,6 +44,7 @@ struct HabitRemindersSheet: View {
                 }
             }
         }
+        .dismissOnSessionExpired()
         .task { await load() }
     }
 

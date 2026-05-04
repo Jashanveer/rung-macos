@@ -47,6 +47,7 @@ struct EnergyView: View {
                         events: calendarService.todaysEvents,
                         forecast: forecast
                     )
+                    PeakShapeBadge(forecast: forecast)
                     EnergyCurveChart(forecast: forecast, suggestion: suggestion)
                         .frame(height: 180)
                     if let suggestion {
@@ -56,6 +57,7 @@ struct EnergyView: View {
                     sleepDebtSection(snapshot: snapshot)
                     recommendationsSection(forecast: forecast)
                     bedtimeSection(snapshot: snapshot)
+                    melatoninWindowSection(forecast: forecast)
                 } else {
                     emptyState
                 }
@@ -181,6 +183,7 @@ struct EnergyView: View {
     private func icon(for kind: EnergyWindow.Kind) -> String {
         switch kind {
         case .focus:    return "brain.head.profile"
+        case .recover:  return "tray.full.fill"
         case .move:     return "figure.run"
         case .windDown: return "moon.stars.fill"
         }
@@ -189,6 +192,7 @@ struct EnergyView: View {
     private func headline(for kind: EnergyWindow.Kind) -> String {
         switch kind {
         case .focus:    return "Focus window"
+        case .recover:  return "Recover · post-lunch dip"
         case .move:     return "Movement window"
         case .windDown: return "Wind-down"
         }
@@ -198,8 +202,10 @@ struct EnergyView: View {
         switch kind {
         case .focus:
             return "Office work, deep focus, learning. Cortisol is at its highest, your prefrontal cortex is sharp — protect this time for analytical work."
+        case .recover:
+            return "Laundry, dishes, cooking, errands. Your alertness dips after lunch — pair low-cognition chores so your peaks aren't burnt on housework. Run a wash while you cook."
         case .move:
-            return "Gym, walks, errands, social calls. Body temperature is climbing for peak physical performance, while cognitive demand naturally dips — pair the two."
+            return "Gym, runs, walks, social calls. Body temperature is at its highest of the day for peak physical performance, while cognitive demand naturally relaxes — pair the two."
         case .windDown:
             return "Reading, journaling, planning tomorrow. Skip intense work and bright screens so melatonin can rise on schedule."
         }
@@ -214,6 +220,25 @@ struct EnergyView: View {
             tint: .indigo,
             primary: "Tonight: aim for \(bedLabel)",
             secondary: "You usually wake around \(wakeLabel) — staying close to your normal window keeps debt from compounding."
+        )
+    }
+
+    /// Predicted dim-light melatonin onset row. The deep-research model
+    /// derives DLMO as wake + 14h, shifted earlier/later when the
+    /// chronotype is stable. Surfacing it explicitly tells the user when
+    /// their biological wind-down begins — the cliff before bedtime
+    /// where bright screens, caffeine, and intense work cost the most.
+    @ViewBuilder
+    private func melatoninWindowSection(forecast: EnergyForecast) -> some View {
+        let dlmoLabel = timeString(forecast.predictedDLMO)
+        let confidenceCopy = forecast.chronotypeStable
+            ? "Anchored to your learned chronotype."
+            : "Anchored to your wake time — refines as we learn your chronotype."
+        InsightRow(
+            systemImage: "drop.halffull",
+            tint: Color(red: 0.46, green: 0.36, blue: 0.86),
+            primary: "Melatonin window opens \(dlmoLabel)",
+            secondary: "Dim screens + skip caffeine ~90 min before this. \(confidenceCopy)"
         )
     }
 
@@ -497,6 +522,56 @@ private struct EnergyGauge: View {
     }
 }
 
+// MARK: - Peak shape badge
+
+/// Compact pill below the gauge that names today's curve shape — single
+/// broad peak vs likely two-peak day — derived from the model's
+/// `bimodalityProbability`. Honest reporting per the deep-research
+/// recommendation: don't pretend the same shape always applies; tell
+/// the user whether to expect one or two productive windows.
+private struct PeakShapeBadge: View {
+    let forecast: EnergyForecast
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let bimodal = forecast.bimodalityProbability >= 0.5
+        let icon = bimodal ? "chart.line.uptrend.xyaxis" : "waveform.path"
+        let title = bimodal ? "Two-peak day expected" : "Single broad peak"
+        let detail = bimodal
+            ? "Morning + late-day window — protect both."
+            : "One sustained envelope — push hard work into the middle."
+        let tint: Color = bimodal
+            ? Color(red: 0.18, green: 0.58, blue: 0.86)
+            : Color(red: 0.46, green: 0.48, blue: 0.84)
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+            Text("·")
+                .foregroundStyle(.tertiary)
+                .font(.system(size: 12, weight: .semibold))
+            Text(detail)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(colorScheme == .dark ? 0.16 : 0.10))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(tint.opacity(0.22), lineWidth: 0.5)
+        )
+    }
+}
+
 // MARK: - Curve
 
 /// Today's energy curve, plotted from the user's typical wake time to
@@ -528,6 +603,7 @@ private struct EnergyCurveChart: View {
                 ? chartStart...chartEnd
                 : chartStart...chartStart.addingTimeInterval(16 * 3600)
             let samples = forecast.curve(from: safeRange.lowerBound, until: safeRange.upperBound, step: 15 * 60)
+            let bandSamples = forecast.curveWithBand(from: safeRange.lowerBound, until: safeRange.upperBound, step: 15 * 60)
             let now = Date()
             let windows = EnergyCurveChart.windows(for: forecast)
 
@@ -544,6 +620,35 @@ private struct EnergyCurveChart: View {
                         style: StrokeStyle(lineWidth: 0.5, dash: [3, 3])
                     )
                 }
+
+                // Confidence band (mean ± σ). Shaded behind everything else
+                // so the curve and annotations sit on top. Wider band when
+                // chronotype is unlearned, sample count is low, or sleep
+                // debt is high — the model's honest "we're guessing" area.
+                Path { path in
+                    guard let first = bandSamples.first else { return }
+                    let upperFirst = pointFor(
+                        sample: (first.time, min(100, first.mean + first.sigma)),
+                        in: geo.size, range: safeRange
+                    )
+                    path.move(to: upperFirst)
+                    for sample in bandSamples.dropFirst() {
+                        let upper = pointFor(
+                            sample: (sample.time, min(100, sample.mean + sample.sigma)),
+                            in: geo.size, range: safeRange
+                        )
+                        path.addLine(to: upper)
+                    }
+                    for sample in bandSamples.reversed() {
+                        let lower = pointFor(
+                            sample: (sample.time, max(0, sample.mean - sample.sigma)),
+                            in: geo.size, range: safeRange
+                        )
+                        path.addLine(to: lower)
+                    }
+                    path.closeSubpath()
+                }
+                .fill(Color.indigo.opacity(colorScheme == .dark ? 0.18 : 0.12))
 
                 // Filled area under the curve.
                 Path { path in
@@ -616,6 +721,40 @@ private struct EnergyCurveChart: View {
                         .frame(width: 9, height: 9)
                         .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.5))
                         .position(nowPoint)
+                }
+
+                // Predicted DLMO marker — soft purple vertical line +
+                // tiny "DLMO" tag at the top. This is when the model
+                // expects the user's biological wind-down to begin;
+                // surfacing it makes the wind-down recommendation
+                // anchor to a real cue instead of a generic "evening".
+                let dlmo = forecast.predictedDLMO
+                if dlmo >= safeRange.lowerBound && dlmo <= safeRange.upperBound {
+                    let dlmoX = pointFor(
+                        sample: (dlmo, 0),
+                        in: geo.size,
+                        range: safeRange
+                    ).x
+                    let dlmoTint = Color(red: 0.46, green: 0.36, blue: 0.86)
+                    Path { path in
+                        path.move(to: CGPoint(x: dlmoX, y: 12))
+                        path.addLine(to: CGPoint(x: dlmoX, y: geo.size.height))
+                    }
+                    .stroke(
+                        dlmoTint.opacity(0.42),
+                        style: StrokeStyle(lineWidth: 0.8, dash: [4, 4])
+                    )
+                    Text("DLMO")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.4)
+                        .foregroundStyle(dlmoTint)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(dlmoTint.opacity(colorScheme == .dark ? 0.22 : 0.16))
+                        )
+                        .position(x: dlmoX, y: 8)
                 }
 
                 // Calendar-aware "best slot" marker. Sits above the
@@ -729,25 +868,51 @@ private struct EnergyCurveChart: View {
         }
     }
 
-    /// Three time-of-day windows derived from the user's wake/bed pair.
-    /// We use heuristic offsets rather than curve extrema because the
-    /// two-process model is monotonic between wake and bed (no real
-    /// "afternoon dip" feature in the curve itself), but chronobiology
-    /// research still shows the windows below align with measurable
-    /// shifts in cortisol, body temperature, and cognitive load.
+    /// Four time-of-day windows derived from the bimodal energy curve.
+    /// The 12-hour harmonic in `EnergyForecast.circadianAlertness` carves
+    /// real local extrema into the curve, so we can find each window
+    /// numerically instead of guessing — but we fall back to fractional
+    /// offsets if the search misses (e.g., a very short waking day).
+    ///
+    /// - **Focus** (~3 h after wake) — first morning peak, post-cortisol-
+    ///   awakening alertness. Best for analytical / office work, learning,
+    ///   anything that needs cognition.
+    /// - **Recover** (~7 h after wake) — post-prandial / siesta dip. Best
+    ///   for chores, errands, low-cognition admin — laundry, dishes,
+    ///   cooking, walking the dog. Don't waste a peak on these.
+    /// - **Move** (~10 h after wake) — afternoon acrophase. Body
+    ///   temperature is highest, peak performance for HIIT, lifting,
+    ///   running. Also a strong second-cognition window for work that
+    ///   missed the morning slot.
+    /// - **Wind-down** (~90 min before bed) — circadian alertness has
+    ///   dropped, sleep pressure is high. Best for reading, journaling,
+    ///   planning tomorrow. Avoid intense work and bright screens.
     static func windows(for forecast: EnergyForecast) -> [EnergyWindow] {
         let wake = forecast.wakeTime
         let bed = forecast.bedTime
         let dayLength = bed.timeIntervalSince(wake)
-        // Anchor windows by fraction of waking day so a 10h or 18h day
-        // both produce sensibly-spaced annotations.
-        let focusTime = wake.addingTimeInterval(dayLength * 0.20)
-        let moveTime = wake.addingTimeInterval(dayLength * 0.55)
+
+        // Numerical extrema — first morning peak, lunch dip, afternoon
+        // peak. nextPeak / nextDip walk the curve in 5-min steps so they
+        // surface real features when the bimodal harmonic produces them.
+        let morningPeak = forecast.nextPeak(after: wake, until: forecast.circadianPeak)
+            ?? wake.addingTimeInterval(dayLength * 0.20)
+        let lunchDip = forecast.nextDip(after: morningPeak, until: forecast.circadianPeak)
+            ?? wake.addingTimeInterval(dayLength * 0.45)
+        // Afternoon peak: search just past the lunch dip to bed.
+        let afternoonPeak = forecast.nextPeak(after: lunchDip, until: bed)
+            ?? wake.addingTimeInterval(dayLength * 0.65)
         let windDownTime = bed.addingTimeInterval(-90 * 60)
+
         return [
-            EnergyWindow(kind: .focus, label: "Focus", time: focusTime, tint: .green),
-            EnergyWindow(kind: .move, label: "Gym", time: moveTime, tint: .orange),
-            EnergyWindow(kind: .windDown, label: "Wind-down", time: windDownTime, tint: .indigo),
+            EnergyWindow(kind: .focus, label: "Focus", time: morningPeak,
+                         tint: Color(red: 0.94, green: 0.74, blue: 0.24)),  // gold
+            EnergyWindow(kind: .recover, label: "Recover", time: lunchDip,
+                         tint: Color(red: 0.94, green: 0.55, blue: 0.18)),  // warm orange
+            EnergyWindow(kind: .move, label: "Move", time: afternoonPeak,
+                         tint: .green),
+            EnergyWindow(kind: .windDown, label: "Wind-down", time: windDownTime,
+                         tint: .indigo),
         ]
     }
 }
@@ -755,8 +920,13 @@ private struct EnergyCurveChart: View {
 /// Single annotated window on the energy curve. `label` is what the
 /// user reads on the badge; the matching `recommendationsSection`
 /// reuses `kind` to look up the long-form copy.
+///
+/// The four-window vocabulary mirrors `HabitTimeSuggestion.TaskShape` so
+/// the per-habit chips and the chart annotations agree on what each
+/// time-of-day band means: focus = morning peak, recover = afternoon
+/// dip, move = afternoon peak, wind-down = pre-bed.
 struct EnergyWindow: Identifiable {
-    enum Kind { case focus, move, windDown }
+    enum Kind { case focus, recover, move, windDown }
     let id = UUID()
     let kind: Kind
     let label: String
@@ -823,6 +993,15 @@ private struct InsightRow: View {
     let primary: String
     let secondary: String
 
+    private var insightSecondaryColor: Color {
+        // Boost contrast: in dark mode, the system `.secondary` fades to
+        // ~40% white, which is unreadable against the energy view's
+        // slight indigo tint. Use 78% white in dark / 65% black in light.
+        colorScheme == .dark
+            ? Color.white.opacity(0.78)
+            : Color.black.opacity(0.65)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: systemImage)
@@ -838,7 +1017,12 @@ private struct InsightRow: View {
                     .font(.system(size: 14, weight: .semibold))
                 Text(secondary)
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    // `.secondary` faded to ~40% in iPad dark mode against
+                    // the energy view's slight tint — too low contrast to
+                    // read at arm's length. Pin to an explicit white-with-
+                    // higher-opacity in dark mode and a darker primary in
+                    // light mode so the body copy actually reads.
+                    .foregroundStyle(insightSecondaryColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)

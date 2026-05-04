@@ -103,6 +103,16 @@ extension HabitBackendStore {
         return try? await sleepSnapshotRepository.fetch()
     }
 
+    /// Push the iPhone-built `WatchSnapshot` JSON to the backend so the
+    /// Apple Watch can fetch it directly when iPhone is unreachable. The
+    /// payload is the same blob shipped over WatchConnectivity. Fire-
+    /// and-forget — failures don't bubble up because WC is the live path
+    /// and the backend upload is the redundancy for travel.
+    func uploadWatchSnapshot(payload: String) async {
+        guard token != nil else { return }
+        _ = try? await watchSnapshotRepository.upload(payload: payload)
+    }
+
     func createHabit(
         title: String,
         reminderWindow: String? = nil,

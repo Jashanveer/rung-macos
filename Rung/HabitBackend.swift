@@ -352,6 +352,12 @@ final class HabitBackendStore: ObservableObject {
     /// backend; the UI uses this to hide network-failure toasts and to trigger
     /// a full sync on the next reconnection.
     @Published var isOnline: Bool = true
+    /// One-shot flag set by `requestRecoveryFreezeIfFatigued()` when the
+    /// backend grants a recovery freeze for the first time today. The
+    /// dashboard observes this and flashes a "rest day, freeze added"
+    /// toast, then resets the flag. Idempotent — flipping it back to
+    /// false after the toast prevents duplicate banners on re-renders.
+    @Published var recoveryFreezeJustGranted: Bool = false
 
     // Per-endpoint request states — UI can show per-section loading/error indicators
     @Published var authRequestState:        RequestState<Void>                    = .idle
@@ -399,6 +405,7 @@ final class HabitBackendStore: ObservableObject {
     let deviceRepository: DeviceRepository
     let preferencesRepository: PreferencesRepository
     let sleepSnapshotRepository: SleepSnapshotRepository
+    let watchSnapshotRepository: WatchSnapshotRepository
     let circleRepository: CircleRepository
     /// Shared response cache; invalidated by any write that mutates the cached resource.
     let responseCache = ResponseCache()
@@ -509,6 +516,7 @@ final class HabitBackendStore: ObservableObject {
         deviceRepository          = DeviceRepository(client: client)
         preferencesRepository     = PreferencesRepository(client: client)
         sleepSnapshotRepository   = SleepSnapshotRepository(client: client)
+        watchSnapshotRepository   = WatchSnapshotRepository(client: client)
         circleRepository          = CircleRepository(client: client)
 
         // Cold launch with a previously-saved session: open the per-user
@@ -678,9 +686,26 @@ final class HabitBackendStore: ObservableObject {
         // entry would survive a sign-out and re-trigger the overlay if
         // someone signed back in to the same account.
         let outgoingUserId = currentUserId
+        let wasAuthenticated = token != nil
         stopStream()
         stopUserStream()
         token = nil; dashboard = nil; liveMessagesByMatch = [:]
+
+        // Broadcast session-expired BEFORE the rest of clearSession
+        // tears down state — any open sheet picks this up and dismisses
+        // cleanly instead of being stranded on top of the auth view.
+        // Only fire when we *had* a session; calling clearSession on a
+        // brand-new launch shouldn't ping every sheet.
+        if wasAuthenticated {
+            NotificationCenter.default.post(name: .rungSessionExpired, object: errorMessage)
+            #if os(iOS)
+            // Push an empty snapshot to the Watch so the wrist falls
+            // back to the "Open Rung on iPhone" connecting state. Without
+            // this, the Watch would keep rendering the previous user's
+            // habits + leaderboard until the next phone-side push.
+            WatchConnectivityService.shared.pushSignedOutSnapshot()
+            #endif
+        }
         WidgetSnapshotWriter.shared.clearBackendData()
         friendSearchResults = []
         preferences = nil

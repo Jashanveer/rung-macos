@@ -102,6 +102,18 @@ struct ContentView: View {
         )
         .onChange(of: backend.isAuthenticated) { _, isAuth in
             hasCompletedOnboarding = isAuth ? resolveOnboardingState() : false
+            #if os(iOS)
+            if isAuth {
+                WatchConnectivityService.shared.attach(backend: backend)
+                WatchConnectivityService.shared.pushSnapshotNow(habits: habits)
+            }
+            #endif
+        }
+        .onReceive(backend.$dashboard) { _ in
+            #if os(iOS)
+            guard backend.isAuthenticated else { return }
+            WatchConnectivityService.shared.pushSnapshotNow(habits: habits)
+            #endif
         }
         .onChange(of: backend.isOnline) { wasOnline, isOnline in
             // Connectivity restored — flush any offline edits to the server.
@@ -176,8 +188,22 @@ struct ContentView: View {
             // (macOS) snapshots through the same backend store. Cheap and
             // idempotent — safe to re-run on every appear.
             SleepInsightsService.shared.bind(backend: backend)
+            // Kick a snapshot refresh up-front so the energy forecast is
+            // populated before any consumer reads it. Without this, the
+            // per-habit chip + chronotype reminders + auto-freeze logic
+            // all see `forecast == nil` until the user manually opens the
+            // Energy view, which surfaces in CenterPanel as missing chips
+            // and the "Try …" rows never lighting up.
+            Task { await SleepInsightsService.shared.refresh() }
             guard backend.isAuthenticated else { return }
             syncWithBackend()
+            // Probe the backend for a "rest day" recovery freeze. The
+            // backend gates on the user's stored sleep snapshot
+            // (debt ≥ 4 h) AND a 20 h cooldown so calling this on every
+            // foreground transition is safe — at most one freeze gets
+            // granted per recovery window. On grant, the dashboard
+            // flashes a one-shot "rest day — freeze added" toast.
+            Task { await backend.requestRecoveryFreezeIfFatigued() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .apnsTokenReceived)) { note in
             guard let token = note.object as? Data else { return }
@@ -191,6 +217,14 @@ struct ContentView: View {
             print("[ContentView] .habitsChangedSSE received auth=\(backend.isAuthenticated)")
             guard backend.isAuthenticated else { return }
             syncWithBackend()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sleepSnapshotChangedSSE)) { _ in
+            // Another device just uploaded a fresh snapshot. Pull it in
+            // immediately so this device's energy curve, focus chips, and
+            // chronotype badge converge within seconds — no foreground
+            // tap or 10s timer wait.
+            guard backend.isAuthenticated else { return }
+            Task { await SleepInsightsService.shared.refreshFromBackendOnChange() }
         }
         // Server returned 404 for a habit/task/check the local store
         // thought existed (e.g. macOS deleted it while iPhone still had
@@ -909,6 +943,18 @@ struct ContentView: View {
         let habitEntries = habits.filter { $0.entryType == .habit }
         timeReminderManager.refreshReminders(
             for: habitEntries,
+            todayKey: todayKey
+        )
+
+        // Chronotype-tuned reminders. Fires 30 min before the user's own
+        // morning peak (workouts), post-lunch dip (chores), or wind-down
+        // (read/journal) instead of a fixed clock time. Co-exists with
+        // the legacy fixed-window reminder pass — different identifier
+        // prefix means each habit can pick up both nudges if the user
+        // wants belt + braces.
+        timeReminderManager.refreshChronotypeReminders(
+            for: habitEntries,
+            forecast: SleepInsightsService.shared.forecast,
             todayKey: todayKey
         )
 

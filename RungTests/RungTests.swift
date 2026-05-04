@@ -421,3 +421,206 @@ struct SSEParsingTests {
         #expect(lastID == "6")
     }
 }
+
+// MARK: - Bimodal energy curve tests
+
+/// Locks the new bimodal `EnergyForecast` against regression — we want the
+/// curve to actually have two peaks and two dips, not one of each. These
+/// tests exercise a typical wake-at-7-AM, peak-at-5-PM chronotype and
+/// assert the canonical features hold:
+///   - sleep inertia notch in the first 45 min after wake
+///   - morning peak between 9 AM and noon (carrier rise + harmonic crest)
+///   - lunch dip between 12 PM and 4 PM (harmonic trough)
+///   - afternoon peak between 4 PM and 8 PM (acrophase)
+///   - monotonic descent into bedtime
+struct EnergyForecastBimodalTests {
+
+    private func makeForecast(wakeHour: Int = 7, bedHour: Int = 23, peakHour: Int = 17,
+                              sleepDebtHours: Double = 0) -> EnergyForecast {
+        let cal = Calendar.current
+        let today = cal.date(bySettingHour: 0, minute: 0, second: 0, of: Date())!
+        return EnergyForecast(
+            wakeTime:       cal.date(bySettingHour: wakeHour, minute: 0, second: 0, of: today)!,
+            bedTime:        cal.date(bySettingHour: bedHour,  minute: 0, second: 0, of: today)!,
+            circadianPeak:  cal.date(bySettingHour: peakHour, minute: 0, second: 0, of: today)!,
+            sleepDebtHours: sleepDebtHours,
+            sampleCount:    14,
+            chronotypeStable: true
+        )
+    }
+
+    private func atHour(_ hour: Int, minute: Int = 0, in forecast: EnergyForecast) -> Date {
+        let cal = Calendar.current
+        return cal.date(bySettingHour: hour, minute: minute, second: 0, of: forecast.wakeTime)!
+    }
+
+    @Test func sleepInertiaDipNearWake() {
+        let f = makeForecast()
+        let atWake     = f.energy(at: f.wakeTime)
+        let twoHrLater = f.energy(at: atHour(9, in: f))
+        // Energy should rise sharply once inertia clears.
+        #expect(twoHrLater > atWake + 8, "Expected energy to rise > 8 points within 2h of wake; was \(atWake) → \(twoHrLater)")
+    }
+
+    @Test func morningPeakAfternoonDipAfternoonPeakOrdering() {
+        let f = makeForecast()
+        let morning   = f.energy(at: atHour(10, in: f))
+        let lunch     = f.energy(at: atHour(14, in: f))
+        let afternoon = f.energy(at: atHour(17, in: f))   // acrophase
+        // Lunch dip MUST be lower than both peaks — that's the whole point
+        // of the 12-h harmonic.
+        #expect(lunch < morning, "Lunch (\(lunch)) should dip below morning peak (\(morning))")
+        #expect(lunch < afternoon, "Lunch (\(lunch)) should dip below afternoon peak (\(afternoon))")
+        // Afternoon peak should be the global daytime maximum — it sits at
+        // the acrophase.
+        #expect(afternoon >= morning, "Afternoon peak (\(afternoon)) should be ≥ morning peak (\(morning))")
+    }
+
+    @Test func nextPeakAndDipLandOnRealExtrema() {
+        let f = makeForecast()
+        let cal = Calendar.current
+        let dayStart = cal.date(bySettingHour: 6, minute: 0, second: 0, of: f.wakeTime)!
+        let dayEnd   = cal.date(bySettingHour: 23, minute: 0, second: 0, of: f.wakeTime)!
+
+        guard let firstPeak = f.nextPeak(after: dayStart, until: dayEnd) else {
+            Issue.record("nextPeak returned nil — the curve must have at least one peak in the day window")
+            return
+        }
+        // The first peak should land in the morning window.
+        let firstPeakHour = cal.component(.hour, from: firstPeak)
+        #expect((8...12).contains(firstPeakHour), "First peak hour was \(firstPeakHour); expected 8–12")
+
+        guard let dip = f.nextDip(after: firstPeak, until: dayEnd) else {
+            Issue.record("nextDip after first peak returned nil — bimodal curve must have a lunch dip")
+            return
+        }
+        let dipHour = cal.component(.hour, from: dip)
+        #expect((12...16).contains(dipHour), "Lunch dip hour was \(dipHour); expected 12–16")
+
+        guard let secondPeak = f.nextPeak(after: dip, until: dayEnd) else {
+            Issue.record("nextPeak after dip returned nil — afternoon peak must exist")
+            return
+        }
+        let secondPeakHour = cal.component(.hour, from: secondPeak)
+        #expect((15...19).contains(secondPeakHour), "Afternoon peak hour was \(secondPeakHour); expected 15–19")
+    }
+
+    @Test func sleepDebtSuppressesPeakHeight() {
+        let rested  = makeForecast(sleepDebtHours: 0).energy(at: atHour(17, in: makeForecast(sleepDebtHours: 0)))
+        let tired   = makeForecast(sleepDebtHours: 4).energy(at: atHour(17, in: makeForecast(sleepDebtHours: 4)))
+        // Same person, different debt — the tired curve should peak lower.
+        #expect(tired < rested, "Sleep debt should suppress peak height; rested=\(rested) tired=\(tired)")
+    }
+
+    @Test func bandLabelTransitionsAcrossDay() {
+        let f = makeForecast()
+        let dawn  = EnergyForecast.label(for: f.energy(at: atHour(7, in: f)))
+        let acro  = EnergyForecast.label(for: f.energy(at: atHour(17, in: f)))
+        let night = EnergyForecast.label(for: f.energy(at: atHour(23, in: f)))
+        #expect(dawn  != acro, "Dawn band should differ from acrophase band; both were \(acro)")
+        #expect(acro  != night, "Acrophase band should differ from late-evening band; both were \(acro)")
+    }
+
+    @Test func predictedDLMOFallsRoughly14HoursAfterWake() {
+        let f = makeForecast(wakeHour: 7, peakHour: 17)  // chronotypeStable=true but
+                                                          // peakHour matches default wake+10
+        let hoursAfterWake = f.predictedDLMO.timeIntervalSince(f.wakeTime) / 3600
+        // Default wake-anchored DLMO: 14h after wake, so ~21:00.
+        #expect(abs(hoursAfterWake - 14) < 0.5, "DLMO should be ~14h after wake; was \(hoursAfterWake)h")
+    }
+
+    @Test func predictedDLMOShiftsLaterForLateChronotype() {
+        let early = makeForecast(wakeHour: 7, peakHour: 16)   // 1h earlier acrophase
+        let late  = makeForecast(wakeHour: 7, peakHour: 19)   // 2h later acrophase
+        // Late chronotype's DLMO must trail the early one — same midpoint
+        // shift the acrophase received gets applied to the DLMO prior so
+        // wake/peak/DLMO stay coherent.
+        #expect(late.predictedDLMO > early.predictedDLMO,
+                "Late chronotype DLMO (\(late.predictedDLMO)) should trail early (\(early.predictedDLMO))")
+    }
+
+    @Test func confidenceBandWidensWhenChronotypeUnstable() {
+        let stable = makeForecast()
+        let cal = Calendar.current
+        let unstable = EnergyForecast(
+            wakeTime: stable.wakeTime,
+            bedTime: stable.bedTime,
+            circadianPeak: stable.circadianPeak,
+            sleepDebtHours: stable.sleepDebtHours,
+            sampleCount: 3,        // sparse data
+            chronotypeStable: false
+        )
+        _ = cal
+        let stableBand = stable.confidenceBand(at: stable.circadianPeak)
+        let unstableBand = unstable.confidenceBand(at: unstable.circadianPeak)
+        #expect(unstableBand > stableBand,
+                "Unlearned chronotype should widen the band; stable=\(stableBand) unstable=\(unstableBand)")
+    }
+
+    @Test func bimodalityProbabilityDetectsCanonicalTwoPeakDay() {
+        // Wake at 6 AM, acrophase at 6 PM → tight harmonic dip + late
+        // shoulder — the canonical bimodal silhouette the research review
+        // describes for a well-rested day worker.
+        let f = makeForecast(wakeHour: 6, bedHour: 23, peakHour: 18, sleepDebtHours: 0)
+        let p = f.bimodalityProbability
+        #expect(p >= 0.5, "A rested 7→23 day with a 6 PM acrophase should register as bimodal; got p=\(p)")
+    }
+
+    @Test func bimodalityProbabilityFallsForSleepDebtFlattenedDay() {
+        // Heavy debt flattens the late-day rebound — the research
+        // recommendation predicts the trough fills in. The model should
+        // therefore drop bimodality classification in that case.
+        let f = makeForecast(wakeHour: 6, bedHour: 23, peakHour: 18, sleepDebtHours: 5)
+        let p = f.bimodalityProbability
+        // Not a hard requirement that it must be 0 — but the heavy-debt
+        // curve should not be strictly more bimodal than the rested one.
+        let rested = makeForecast(wakeHour: 6, bedHour: 23, peakHour: 18, sleepDebtHours: 0)
+        #expect(p <= rested.bimodalityProbability,
+                "Sleep-debt curve should not be more bimodal than rested; rested=\(rested.bimodalityProbability) tired=\(p)")
+    }
+}
+
+// MARK: - Per-habit time suggestion tests
+
+/// Locks the canonical-key + keyword classifier in
+/// `HabitTimeSuggestion.TaskShape.classify(_:)` so the per-habit chip
+/// renders the right band for each habit type.
+struct HabitTimeSuggestionShapeTests {
+    typealias Shape = HabitTimeSuggestion.TaskShape
+
+    @Test func canonicalKeysMapToExpectedShapes() {
+        #expect(Shape.classify(canonicalKey: "workout",  title: "")  == .peak)
+        #expect(Shape.classify(canonicalKey: "run",      title: "")  == .peak)
+        #expect(Shape.classify(canonicalKey: "study",    title: "")  == .peak)
+        #expect(Shape.classify(canonicalKey: "read",     title: "")  == .windDown)
+        #expect(Shape.classify(canonicalKey: "meditate", title: "")  == .windDown)
+        #expect(Shape.classify(canonicalKey: "journal",  title: "")  == .windDown)
+        #expect(Shape.classify(canonicalKey: "yoga",     title: "")  == .flexible)
+        #expect(Shape.classify(canonicalKey: "water",    title: "")  == .flexible)
+    }
+
+    @Test func keywordFallbackPicksDipForChores() {
+        #expect(Shape.classify(canonicalKey: nil, title: "Run laundry")        == .dip)
+        #expect(Shape.classify(canonicalKey: nil, title: "Wash dishes")        == .dip)
+        #expect(Shape.classify(canonicalKey: nil, title: "Reply to inbox")     == .dip)
+        #expect(Shape.classify(canonicalKey: nil, title: "Cook dinner")        == .dip)
+    }
+
+    @Test func keywordFallbackPicksPeakForCognitiveWork() {
+        #expect(Shape.classify(canonicalKey: nil, title: "Gym 6 AM")           == .peak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Deep work block")    == .peak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Code review session") == .peak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Study for exam")     == .peak)
+    }
+
+    @Test func keywordFallbackPicksWindDownForContemplative() {
+        #expect(Shape.classify(canonicalKey: nil, title: "Read 20 minutes")    == .windDown)
+        #expect(Shape.classify(canonicalKey: nil, title: "Stretch before bed") == .windDown)
+        #expect(Shape.classify(canonicalKey: nil, title: "Plan tomorrow")      == .windDown)
+    }
+
+    @Test func unknownTitleFallsBackToFlexible() {
+        #expect(Shape.classify(canonicalKey: nil, title: "Something random") == .flexible)
+        #expect(Shape.classify(canonicalKey: nil, title: "")                 == .flexible)
+    }
+}

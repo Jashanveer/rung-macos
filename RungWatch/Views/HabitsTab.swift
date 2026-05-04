@@ -175,22 +175,36 @@ private struct HabitNextUpRow: View {
     }
 
     private var rowContent: some View {
-        HStack(spacing: 10) {
-            Text(habit.emoji.isEmpty ? "•" : habit.emoji)
-                .font(.system(size: 22 * scale))
-                .frame(width: 28)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(habit.title)
-                    .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
-                    .foregroundStyle(WatchTheme.ink)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
-                    .foregroundStyle(WatchTheme.inkSoft)
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text(habit.emoji.isEmpty ? "•" : habit.emoji)
+                    .font(.system(size: 22 * scale))
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(habit.title)
+                        .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
+                        .foregroundStyle(WatchTheme.ink)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
+                        .foregroundStyle(WatchTheme.inkSoft)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                trailing
             }
-            Spacer(minLength: 6)
-            trailing
+            // AI/heuristic time suggestion chip — shipped over from
+            // iPhone in the snapshot. Mirrors what iOS / iPadOS / macOS
+            // show so the user sees the same recommendation across all
+            // surfaces.
+            if let suggestion = habit.suggestionLabel, !suggestion.isEmpty {
+                Text(suggestion)
+                    .font(WatchTheme.font(.label, scale: scale, weight: .medium))
+                    .foregroundStyle(WatchTheme.accent)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .padding(.leading, 2)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

@@ -291,6 +291,12 @@ extension Notification.Name {
     /// wrote a habit — ContentView reacts by triggering syncWithBackend
     /// so the change lands within seconds instead of on the next timer.
     static let habitsChangedSSE = Notification.Name("habitsChangedSSE")
+    /// Fired when the per-user SSE stream reports another device just
+    /// uploaded a fresh sleep snapshot. SleepInsightsService listens and
+    /// refetches the server snapshot so the energy view, focus suggester,
+    /// and chronotype badge converge across devices in seconds — same
+    /// pattern habits use, applied to the cross-device sleep data path.
+    static let sleepSnapshotChangedSSE = Notification.Name("sleepSnapshotChangedSSE")
     /// Fired when the backend hard-deletes the current user's account
     /// (locally via the deleteAccount API call, or remotely via the
     /// `session.revoked` SSE event broadcast to all of the user's
@@ -298,4 +304,36 @@ extension Notification.Name {
     /// SwiftData habits + completion records so a subsequent sign-in
     /// can never resurrect ghost data from the previous account.
     static let rungAccountDeleted = Notification.Name("rungAccountDeleted")
+    /// Fired by `HabitBackendStore.clearSession` when the user is being
+    /// signed out because their session expired, the refresh token was
+    /// revoked server-side, or any 401/403 propagated up. All open sheets
+    /// + popovers observe this and dismiss themselves so the user lands
+    /// on the auth view instead of seeing a stale modal stranded on top
+    /// of the sign-in screen.
+    static let rungSessionExpired = Notification.Name("rungSessionExpired")
+}
+
+// MARK: - Auto-dismiss on session expiry
+
+extension View {
+    /// Drop-in modifier — apply at the outermost level of any modal
+    /// presentation (sheet, popover, fullScreenCover) that requires an
+    /// authenticated session. When `.rungSessionExpired` lands, the
+    /// modal dismisses itself before the auth view takes over the root.
+    /// Idempotent + cheap; safe to layer onto every sheet that hits the
+    /// backend.
+    func dismissOnSessionExpired() -> some View {
+        modifier(DismissOnSessionExpiredModifier())
+    }
+}
+
+private struct DismissOnSessionExpiredModifier: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .rungSessionExpired)) { _ in
+                dismiss()
+            }
+    }
 }

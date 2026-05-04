@@ -135,6 +135,16 @@ extension HabitBackendStore {
                     NotificationCenter.default.post(name: .habitsChangedSSE, object: nil)
                 }
             }
+        case "sleep.changed":
+            // Another device just uploaded a fresh sleep snapshot.
+            // SleepInsightsService observes this notification and refetches
+            // the backend snapshot so the energy curve, sleep-debt readout,
+            // and chronotype badge converge across devices in seconds —
+            // same pattern habits.changed uses, applied to sleep data.
+            HabitBackendStore.sseLog("[UserStream] sleep.changed received id=\(id ?? "-")")
+            Task { @MainActor in
+                NotificationCenter.default.post(name: .sleepSnapshotChangedSSE, object: nil)
+            }
         case "prefs.changed":
             // Profile (username/avatar/displayName) or settings
             // (weekly-report toggle) changed on another device. Refresh

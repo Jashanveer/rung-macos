@@ -95,10 +95,20 @@ final class SleepInsightsService: ObservableObject {
         await refreshFromHealthKit(nights: nights)
     }
 
-    /// HealthKit-driven refresh path. iOS-only because native macOS apps
-    /// can't read HK. After computing locally, pushes the snapshot to
-    /// the backend so the Mac client can read what we just computed.
+    /// HealthKit-driven refresh path. iOS reads HK and uploads to the
+    /// backend; macOS skips HK entirely (Mac apps either don't have HK
+    /// data or have stale samples) and goes straight to the server-side
+    /// snapshot the iPhone wrote. After computing locally on iOS, pushes
+    /// the snapshot to the backend so other devices can read it.
     private func refreshFromHealthKit(nights: Int) async {
+        #if os(macOS)
+        // macOS Apple Health rarely has actual sleep samples — they live
+        // on iPhone/Watch. Always pull the backend snapshot directly so
+        // the energy view renders the iPhone-derived data instead of
+        // sitting on the empty state.
+        await refreshFromBackend()
+        return
+        #else
         guard HKHealthStore.isHealthDataAvailable(),
               let sleepType = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
             // HK isn't available on this device — try the backend
@@ -121,18 +131,27 @@ final class SleepInsightsService: ObservableObject {
         do {
             samples = try await fetchSleepSamples(type: sleepType, predicate: predicate)
         } catch {
-            // Don't claim "0 nights" when the query itself failed — leave
-            // the count nil so the empty-state UI can tell auth/data
-            // problems apart from "we genuinely saw zero samples".
+            // HK query threw — treat the same as "no local data" and try
+            // the backend snapshot the iPhone uploaded. Without this fall-
+            // through, transient HK errors leave the user staring at the
+            // empty state forever even though the server has fresh data.
             lastSleepNightCount = nil
+            await refreshFromBackend()
             return
         }
 
         let nightlySamples = bucketByNight(samples: samples)
         lastSleepNightCount = nightlySamples.count
         guard nightlySamples.count >= 3 else {
-            // Not enough data — leave the prior snapshot in place so the
-            // UI doesn't flap between "we have a suggestion" and "we don't".
+            // Local HK didn't have enough — try the backend snapshot the
+            // iPhone uploaded. macOS is the typical caller here:
+            // HKHealthStore.isHealthDataAvailable() is true on macOS 13+
+            // but the Mac usually has zero sleep samples of its own
+            // (Apple Health data only syncs from iCloud when explicitly
+            // enabled). Without this fallback the energy view stays
+            // empty on the Mac even though the iPhone already wrote a
+            // valid snapshot to /api/users/me/sleep-snapshot.
+            await refreshFromBackend()
             return
         }
 
@@ -207,6 +226,16 @@ final class SleepInsightsService: ObservableObject {
             )
             await backend.uploadSleepSnapshot(payload)
         }
+        #endif
+    }
+
+    /// SSE-driven refresh. Called from the per-user stream `sleep.changed`
+    /// handler when another device just uploaded a new snapshot. Always
+    /// goes to the backend — never re-runs a HealthKit pass — so the same
+    /// hook works on iOS (mirror what the Mac wrote) and macOS (pick up
+    /// the iPhone's upload within seconds).
+    func refreshFromBackendOnChange() async {
+        await refreshFromBackend()
     }
 
     /// Backend-driven refresh. Used as a fallback by `refreshFromHealthKit`
@@ -217,7 +246,8 @@ final class SleepInsightsService: ObservableObject {
         isRefreshing = true
         defer { isRefreshing = false }
 
-        guard let backend, let remote = await backend.fetchSleepSnapshot() else {
+        guard let backend else { return }
+        guard let remote = await backend.fetchSleepSnapshot() else {
             // Don't blow away an existing snapshot — let the empty state
             // continue showing if we already had nothing.
             return
@@ -233,6 +263,10 @@ final class SleepInsightsService: ObservableObject {
             midpointIQRMinutes: remote.midpointIqrMinutes,
             chronotypeStable: remote.chronotypeStable
         )
+        // Mirror the inferred night count so the empty-state copy
+        // distinguishes "Mac never received a snapshot" from "we have
+        // data but the iPhone has only one or two nights tracked".
+        lastSleepNightCount = snap.sampleCount
         snapshot = snap
         snapshotUpdatedAt = remote.updatedAt
         forecast = Self.makeForecast(snap: snap)

@@ -511,6 +511,19 @@ struct AccountabilityRepository {
         )
     }
 
+    /// Asks the backend to grant a "rest day" freeze if the caller's
+    /// stored sleep snapshot shows enough cumulative debt that the body
+    /// is genuinely under-recovered. Idempotent server-side over a 20 h
+    /// cooldown — calling this every dashboard refresh is safe and the
+    /// expected pattern. Returns the refreshed dashboard either way; the
+    /// client compares `freezesAvailable` before/after to decide whether
+    /// to surface a "rest day, freeze added" toast.
+    func recoveryFreeze() async throws -> AccountabilityDashboard {
+        try await client.authorizedRequest(
+            path: "/api/accountability/streak-freeze/recovery", method: "POST"
+        )
+    }
+
     func sendNudge(matchId: Int64) async throws -> AccountabilityDashboard {
         try await client.authorizedRequest(path: "/api/accountability/matches/\(matchId)/nudge", method: "POST")
     }

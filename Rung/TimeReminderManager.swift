@@ -111,6 +111,120 @@ final class TimeReminderManager: ObservableObject {
         }
     }
 
+    /// Schedule one notification per pending habit at the slot where the
+    /// user's *own* energy curve favours that habit's task shape — workouts
+    /// fire 30 min before the next morning peak, chores 30 min before the
+    /// post-lunch dip, contemplative wind-down habits 90 min before bed.
+    /// Falls back to silently skipping a habit when no good slot is left
+    /// today (chip already advised the user).
+    ///
+    /// Identifier prefix `chrono-reminder-` so the chrono pass never
+    /// collides with the legacy fixed-window pass; both can co-exist.
+    func refreshChronotypeReminders(
+        for habits: [Habit],
+        forecast: EnergyForecast?,
+        todayKey: String
+    ) {
+        let center = UNUserNotificationCenter.current()
+        let now = Date()
+        let plans: [ChronotypeReminderPlan] = {
+            guard let forecast else { return [] }
+            return habits.compactMap { habit in
+                chronotypePlan(for: habit, forecast: forecast, todayKey: todayKey, now: now)
+            }
+        }()
+
+        center.getPendingNotificationRequests { [chronotypeIdentifierPrefix, plans] requests in
+            let stale = requests.map(\.identifier)
+                .filter { $0.hasPrefix(chronotypeIdentifierPrefix) }
+            center.removePendingNotificationRequests(withIdentifiers: stale)
+            for plan in plans {
+                let content = UNMutableNotificationContent()
+                content.title = plan.title
+                content.body = plan.body
+                content.sound = .default
+                let comps = Calendar.current.dateComponents(
+                    [.year, .month, .day, .hour, .minute],
+                    from: plan.triggerDate
+                )
+                let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+                let request = UNNotificationRequest(
+                    identifier: "\(chronotypeIdentifierPrefix)\(plan.identifier)",
+                    content: content,
+                    trigger: trigger
+                )
+                center.add(request)
+            }
+        }
+    }
+
+    /// Compute the trigger time and copy for a single habit. Returns nil
+    /// when the habit is already done today, archived, or no slot remains
+    /// in the day's window.
+    private func chronotypePlan(
+        for habit: Habit,
+        forecast: EnergyForecast,
+        todayKey: String,
+        now: Date
+    ) -> ChronotypeReminderPlan? {
+        guard !habit.isArchived,
+              habit.entryType == .habit,
+              !habit.completedDayKeys.contains(todayKey) else { return nil }
+
+        let shape = HabitTimeSuggestion.TaskShape.classify(
+            canonicalKey: habit.canonicalKey,
+            title: habit.title
+        )
+
+        let endOfDay = Calendar.current.date(
+            bySettingHour: 23, minute: 30, second: 0, of: now
+        ) ?? now.addingTimeInterval(12 * 3600)
+
+        let band: Date?
+        let bandLabel: String
+        switch shape {
+        case .peak:
+            band = forecast.nextPeak(after: now, until: endOfDay)
+            bandLabel = "your next energy peak"
+        case .dip:
+            band = forecast.nextDip(after: now, until: endOfDay)
+            bandLabel = "the post-lunch dip"
+        case .windDown:
+            band = forecast.bedTime.addingTimeInterval(-90 * 60)
+            bandLabel = "wind-down window"
+        case .flexible:
+            // Flexible habits don't get an extra chronotype nudge — the
+            // legacy reminderWindow + per-habit chip already cover them
+            // and stacking another notification just adds noise.
+            return nil
+        }
+
+        guard let bandTime = band else { return nil }
+        // Fire 30 min before the band so the user has time to start.
+        let trigger = bandTime.addingTimeInterval(-30 * 60)
+        guard trigger > now.addingTimeInterval(60) else { return nil }
+
+        let stableId: String = {
+            if let bid = habit.backendId { return "b\(bid)" }
+            return habit.ensureLocalUUID().uuidString
+        }()
+
+        let timeStr: String = {
+            let f = DateFormatter()
+            f.dateFormat = "h:mm a"
+            return f.string(from: bandTime)
+        }()
+
+        return ChronotypeReminderPlan(
+            identifier: stableId,
+            title: habit.title,
+            body: "\(timeStr) is \(bandLabel) — start now to land it.",
+            triggerDate: trigger
+        )
+    }
+
+    private let chronotypeIdentifierPrefix = "chrono-reminder-"
+
     func refreshReminders(for habits: [Habit], todayKey: String) {
         let center = UNUserNotificationCenter.current()
         let now = Date()
@@ -355,6 +469,13 @@ private struct ReminderPlan {
 }
 
 private struct TaskReminderPlan {
+    let identifier: String
+    let title: String
+    let body: String
+    let triggerDate: Date
+}
+
+private struct ChronotypeReminderPlan {
     let identifier: String
     let title: String
     let body: String

@@ -27,6 +27,68 @@ struct WatchSnapshot: Codable, Equatable {
         let isCompleted: Bool          // derived: progress >= 1 OR completedDayKeys contains today
         let sourceLabel: String        // for HealthKit rows: "APPLE HEALTH"; manual: ""
         let canonicalKey: String?      // optional — drives drill-in detail behaviour
+        /// Pre-formatted AI/heuristic time suggestion the iPhone computed.
+        /// Mirrors the chip the user sees on iOS/iPadOS/macOS so the
+        /// watch experience is consistent — "Try 1:30 PM — afternoon
+        /// dip, fine for chores". Optional so older snapshots keep
+        /// decoding cleanly.
+        let suggestionLabel: String?
+
+        // Legacy initializer signature kept stable so older test fixtures
+        // and preview helpers don't break when the new `suggestionLabel`
+        // arg is added — defaulted to nil.
+        init(
+            id: String,
+            title: String,
+            emoji: String,
+            kind: HabitKind,
+            progress: Double,
+            unitsLogged: Int,
+            unitsTarget: Int,
+            unitsLabel: String,
+            isCompleted: Bool,
+            sourceLabel: String,
+            canonicalKey: String?,
+            suggestionLabel: String? = nil
+        ) {
+            self.id = id
+            self.title = title
+            self.emoji = emoji
+            self.kind = kind
+            self.progress = progress
+            self.unitsLogged = unitsLogged
+            self.unitsTarget = unitsTarget
+            self.unitsLabel = unitsLabel
+            self.isCompleted = isCompleted
+            self.sourceLabel = sourceLabel
+            self.canonicalKey = canonicalKey
+            self.suggestionLabel = suggestionLabel
+        }
+
+        // Codable: declare the keys explicitly so a missing
+        // `suggestionLabel` decodes to nil instead of a JSON error when
+        // an older iOS build pushes a snapshot.
+        enum CodingKeys: String, CodingKey {
+            case id, title, emoji, kind, progress
+            case unitsLogged, unitsTarget, unitsLabel
+            case isCompleted, sourceLabel, canonicalKey, suggestionLabel
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.id = try c.decode(String.self, forKey: .id)
+            self.title = try c.decode(String.self, forKey: .title)
+            self.emoji = try c.decode(String.self, forKey: .emoji)
+            self.kind = try c.decode(HabitKind.self, forKey: .kind)
+            self.progress = try c.decode(Double.self, forKey: .progress)
+            self.unitsLogged = try c.decode(Int.self, forKey: .unitsLogged)
+            self.unitsTarget = try c.decode(Int.self, forKey: .unitsTarget)
+            self.unitsLabel = try c.decode(String.self, forKey: .unitsLabel)
+            self.isCompleted = try c.decode(Bool.self, forKey: .isCompleted)
+            self.sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
+            self.canonicalKey = try c.decodeIfPresent(String.self, forKey: .canonicalKey)
+            self.suggestionLabel = try c.decodeIfPresent(String.self, forKey: .suggestionLabel)
+        }
     }
 
     // MARK: Metrics

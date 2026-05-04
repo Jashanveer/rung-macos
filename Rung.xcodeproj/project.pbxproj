@@ -68,29 +68,6 @@
 		};
 /* End PBXCopyFilesBuildPhase section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		9BWATCH0050000000000050 /* Embed Watch Content (device only) */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/RungWatch.app",
-			);
-			name = "Embed Watch Content (device only)";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "# Replaces Xcode's default \"Embed Watch Content\" PBXCopyFilesBuildPhase\n# with a conditional copy. Apple's embeddedBinaryValidationUtility in\n# Xcode 16+ rejects ANY embedded watchOS app inside an iPhone Simulator\n# host bundle (even one correctly built for watchsimulator). The\n# official PBXCopyFilesBuildPhase auto-registers an entry in the\n# validator's check list, so removing the file after the copy fails —\n# the validator complains the registered file is gone.\n#\n# Using a script phase bypasses validator auto-registration. We copy\n# RungWatch.app to ${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Watch/\n# only for iphoneos hosts (real iPhones / archive). iphonesimulator,\n# macosx, and any other host gets no Watch payload, so no validation\n# runs. Paired iPhone+Watch simulator runs install the watch app\n# through the simulator's own pairing pathway, not via this embed,\n# so skipping is safe there too.\n#\n# The dependency on the RungWatch target is preserved in the Rung\n# target's dependencies array, so RungWatch.app still builds on every\n# host build — it just isn't copied into non-iphoneos host bundles.\nif [ \"$PLATFORM_NAME\" != \"iphoneos\" ]; then\n  echo \"note: Skipping Watch embed for $PLATFORM_NAME host (only iphoneos embeds RungWatch.app).\"\n  exit 0\nfi\n\n# Watch dependency lands in a sibling platform products dir. For an\n# iphoneos host, the matching watch SDK is watchos (device).\nWATCH_PRODUCTS_DIR=\"${BUILD_DIR}/${CONFIGURATION}-watchos\"\nWATCH_SOURCE=\"${WATCH_PRODUCTS_DIR}/RungWatch.app\"\nif [ ! -d \"$WATCH_SOURCE\" ]; then\n  echo \"warning: $WATCH_SOURCE not found — RungWatch dependency may not have built for watchos. Skipping embed.\"\n  exit 0\nfi\n\nWATCH_DEST_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Watch\"\nmkdir -p \"$WATCH_DEST_DIR\"\nrm -rf \"$WATCH_DEST_DIR/RungWatch.app\"\n/bin/cp -R \"$WATCH_SOURCE\" \"$WATCH_DEST_DIR/\"\necho \"Embedded $WATCH_SOURCE into $WATCH_DEST_DIR/\"\n";
-		};
-/* End PBXShellScriptBuildPhase section */
-
 /* Begin PBXFileReference section */
 		9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ScreenTimeMonitor.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		9B49CD9E2F9BD0CD001B86CD /* DeviceActivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = DeviceActivity.framework; path = System/Library/Frameworks/DeviceActivity.framework; sourceTree = SDKROOT; };
@@ -378,6 +355,27 @@
 			productReference = 9BA6DB152F8F3C90009AA3BC /* RungUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		9BWATCH0000000000000002 /* RungWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9BWATCH0007000000000007 /* Build configuration list for PBXNativeTarget "RungWatch" */;
+			buildPhases = (
+				9BWATCH0008000000000008 /* Sources */,
+				9BWATCH0006000000000006 /* Frameworks */,
+				9BWATCH0009000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				721684DBC3B6D1921098EDDD /* RungShared */,
+				9BWATCH0005000000000005 /* RungWatch */,
+			);
+			name = RungWatch;
+			productName = RungWatch;
+			productReference = 9BWATCH0000000000000001 /* RungWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
 		F154B69396161217305A3106 /* RungWidgets */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 18851B6067F49ACEBA70084E /* Build configuration list for PBXNativeTarget "RungWidgets" */;
@@ -398,27 +396,6 @@
 			productName = RungWidgets;
 			productReference = C1DA33907F824AA520B8E3E6 /* RungWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
-		};
-		9BWATCH0000000000000002 /* RungWatch */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 9BWATCH0007000000000007 /* Build configuration list for PBXNativeTarget "RungWatch" */;
-			buildPhases = (
-				9BWATCH0008000000000008 /* Sources */,
-				9BWATCH0006000000000006 /* Frameworks */,
-				9BWATCH0009000000000009 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				9BWATCH0005000000000005 /* RungWatch */,
-				721684DBC3B6D1921098EDDD /* RungShared */,
-			);
-			name = RungWatch;
-			productName = RungWatch;
-			productReference = 9BWATCH0000000000000001 /* RungWatch.app */;
-			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
@@ -526,6 +503,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		9BWATCH0050000000000050 /* Embed Watch Content (device only) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/RungWatch.app",
+			);
+			name = "Embed Watch Content (device only)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Replaces Xcode's default \"Embed Watch Content\" PBXCopyFilesBuildPhase\n# with a conditional copy. Apple's embeddedBinaryValidationUtility in\n# Xcode 16+ rejects ANY embedded watchOS app inside an iPhone Simulator\n# host bundle (even one correctly built for watchsimulator). The\n# official PBXCopyFilesBuildPhase auto-registers an entry in the\n# validator's check list, so removing the file after the copy fails —\n# the validator complains the registered file is gone.\n#\n# Using a script phase bypasses validator auto-registration. We copy\n# RungWatch.app to ${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Watch/\n# only for iphoneos hosts (real iPhones / archive). iphonesimulator,\n# macosx, and any other host gets no Watch payload, so no validation\n# runs. Paired iPhone+Watch simulator runs install the watch app\n# through the simulator's own pairing pathway, not via this embed,\n# so skipping is safe there too.\n#\n# The dependency on the RungWatch target is preserved in the Rung\n# target's dependencies array, so RungWatch.app still builds on every\n# host build — it just isn't copied into non-iphoneos host bundles.\nif [ \"$PLATFORM_NAME\" != \"iphoneos\" ]; then\n  echo \"note: Skipping Watch embed for $PLATFORM_NAME host (only iphoneos embeds RungWatch.app).\"\n  exit 0\nfi\n\n# Watch dependency lands in a sibling platform products dir. For an\n# iphoneos host, the matching watch SDK is watchos (device).\nWATCH_PRODUCTS_DIR=\"${BUILD_DIR}/${CONFIGURATION}-watchos\"\nWATCH_SOURCE=\"${WATCH_PRODUCTS_DIR}/RungWatch.app\"\nif [ ! -d \"$WATCH_SOURCE\" ]; then\n  echo \"warning: $WATCH_SOURCE not found — RungWatch dependency may not have built for watchos. Skipping embed.\"\n  exit 0\nfi\n\nWATCH_DEST_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Watch\"\nmkdir -p \"$WATCH_DEST_DIR\"\nrm -rf \"$WATCH_DEST_DIR/RungWatch.app\"\n/bin/cp -R \"$WATCH_SOURCE\" \"$WATCH_DEST_DIR/\"\necho \"Embedded $WATCH_SOURCE into $WATCH_DEST_DIR/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		26D09A9C09358DD90DAF59C3 /* Sources */ = {
@@ -1021,46 +1021,12 @@
 			};
 			name = Release;
 		};
-		DE280EAEA2CA13928DBC3B4D /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CODE_SIGN_ENTITLEMENTS = RungWidgets/RungWidgets.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
-				DEVELOPMENT_TEAM = YLN8JUVVX3;
-				ENABLE_HARDENED_RUNTIME = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu17;
-				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = RungWidgets/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Rung Widgets";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026. All rights reserved.";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/../Frameworks",
-					"@executable_path/../../../../Frameworks",
-				);
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jashanveer.Rung.RungWidgets;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
-				SDKROOT = auto;
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
 		9BWATCH0011000000000011 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RungWatch/RungWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = YLN8JUVVX3;
@@ -1094,6 +1060,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RungWatch/RungWatch.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = YLN8JUVVX3;
@@ -1119,6 +1086,41 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
 				WATCHOS_DEPLOYMENT_TARGET = 11.0;
+			};
+			name = Release;
+		};
+		DE280EAEA2CA13928DBC3B4D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = RungWidgets/RungWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = YLN8JUVVX3;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RungWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Rung Widgets";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026. All rights reserved.";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jashanveer.Rung.RungWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = auto;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};

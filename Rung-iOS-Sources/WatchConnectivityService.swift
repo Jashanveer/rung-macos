@@ -2,6 +2,7 @@
 import Foundation
 import SwiftData
 import WatchConnectivity
+import Combine
 
 /// iPhone-side glue between the live SwiftData store and the paired Apple
 /// Watch. Activates `WCSession`, listens for the Watch's `logHabit` /
@@ -31,8 +32,23 @@ final class WatchConnectivityService: NSObject {
     private var pendingPushTimer: Timer?
     private var lastPushedJSON: Data?
 
+    /// Observes `HabitAITimeAdvisor` so a freshly-resolved AI suggestion
+    /// triggers a snapshot re-push to the watch — the per-habit chip
+    /// stays consistent with iOS within a beat of the LLM landing.
+    private var advisorObservation: AnyCancellable?
+
     private override init() {
         super.init()
+        advisorObservation = HabitAITimeAdvisor.shared.$suggestionsByKey
+            .dropFirst()  // skip the empty-state init publish
+            .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                guard let container = self.modelContainer else { return }
+                let context = ModelContext(container)
+                let habits = (try? context.fetch(FetchDescriptor<Habit>())) ?? []
+                self.scheduleSnapshotPush(habits: habits)
+            }
     }
 
     /// Activate the WCSession and start listening for Watch messages.
@@ -62,9 +78,10 @@ final class WatchConnectivityService: NSObject {
     func scheduleSnapshotPush(habits: [Habit]) {
         let snapshot = makeSnapshot(habits: habits)
         pendingPushTimer?.invalidate()
-        pendingPushTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.pushSnapshot(snapshot, force: false)
+        pendingPushTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self, snapshot] _ in
+            guard let service = self else { return }
+            Task { @MainActor [service, snapshot] in
+                service.pushSnapshot(snapshot, force: false)
             }
         }
     }
@@ -79,17 +96,42 @@ final class WatchConnectivityService: NSObject {
         pushSnapshot(snapshot, force: true)
     }
 
+    /// Push an empty + signed-out snapshot to the Watch when the iPhone
+    /// signs out (manually or because the session expired). The Watch's
+    /// root view checks `hasReceivedRealData` AND falls back to its
+    /// "Open Rung on iPhone" connecting view when the snapshot's account
+    /// handle is empty — so the wrist surface auto-clears the previous
+    /// user's habits + leaderboard the moment iPhone Rung loses auth,
+    /// instead of stranding stale data until the next pull.
+    func pushSignedOutSnapshot() {
+        let empty = WatchSnapshot.empty()
+        // Bypass the byte-identical dedup so the empty payload always
+        // overwrites whatever the last live push was.
+        lastPushedJSON = nil
+        pushSnapshot(empty, force: true)
+    }
+
     private func pushSnapshot(_ snapshot: WatchSnapshot, force: Bool) {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
-        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else {
-            print("[WatchConnectivity] push skipped — activation=\(session.activationState.rawValue) paired=\(session.isPaired) installed=\(session.isWatchAppInstalled)")
+        // Only the activation state is hard-required — `updateApplicationContext`
+        // and `transferUserInfo` queue safely on the iPhone even if the system
+        // momentarily reports `isPaired == false` or `isWatchAppInstalled == false`
+        // (these flags are advisory and can lag a real reconnect by seconds).
+        // Returning early on a stale flag was the smoking gun for the watch
+        // staying on "Connecting…" — once a transient false-negative landed,
+        // every subsequent retry fell into the same dropped-push path.
+        guard session.activationState == .activated else {
+            print("[WatchConnectivity] push skipped — activation=\(session.activationState.rawValue)")
             return
         }
+        if !session.isPaired || !session.isWatchAppInstalled {
+            // Log but don't bail — let the durable channels queue, then deliver
+            // once the OS fully sees the paired watch.
+            print("[WatchConnectivity] push proceeding with stale flags: paired=\(session.isPaired) installed=\(session.isWatchAppInstalled)")
+        }
 
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(snapshot) else { return }
+        guard let data = encodedSnapshotData(snapshot) else { return }
 
         // Skip if the payload is byte-identical to the last one we pushed —
         // saves Watch wake-ups while typing. `force = true` (used when the
@@ -98,7 +140,20 @@ final class WatchConnectivityService: NSObject {
         if !force, data == lastPushedJSON { return }
         lastPushedJSON = data
 
-        let payload: [String: Any] = ["snapshot": data]
+        // Auth-token piggy-back. Bundle the live access token + expiry +
+        // refresh token alongside the snapshot so the watch can persist
+        // it locally and later talk to the backend directly when the
+        // phone is in another room. Reading from `KeychainSessionStore`
+        // means we're always shipping the freshest token without coupling
+        // this service to the backend store.
+        var payload: [String: Any] = ["snapshot": data]
+        if let session = KeychainSessionStore.load() {
+            payload["accessToken"] = session.accessToken
+            payload["accessTokenExpiresAt"] = session.accessTokenExpiresAt.timeIntervalSince1970
+            if let refresh = session.refreshToken {
+                payload["refreshToken"] = refresh
+            }
+        }
 
         // Live channel: sendMessage delivers in <100ms when the watch is
         // reachable (foreground or recent wrist-raise). We don't block on
@@ -106,7 +161,9 @@ final class WatchConnectivityService: NSObject {
         // even if this fails. This is the same instant-feel pattern the
         // backend SSE channel gives us between iOS and macOS.
         if session.isReachable {
-            session.sendMessage(payload, replyHandler: nil) { _ in }
+            session.sendMessage(payload, replyHandler: nil) { err in
+                print("[WatchConnectivity] sendMessage error: \(err)")
+            }
         }
 
         // Durable channel: applicationContext survives sleep + relaunches
@@ -117,6 +174,47 @@ final class WatchConnectivityService: NSObject {
             // Most likely the Watch app isn't installed yet — ignore.
             print("[WatchConnectivity] updateApplicationContext failed: \(error)")
         }
+        // Belt-and-braces: queue via transferUserInfo too. Survives sleep,
+        // relaunches, and reachability hiccups — much more durable than
+        // updateApplicationContext alone, which only delivers the LAST
+        // context value (so a rapid burst loses every push but the final).
+        // Cost is a small queued frame on iPhone, paid back as instant
+        // first-paint when the watch finally activates.
+        if force {
+            session.transferUserInfo(payload)
+        }
+
+        // Direct-to-watch sync: upload to backend so the watch can fetch
+        // it over the network when iPhone is in another room. WC is the
+        // fast channel, the backend upload is the durable channel that
+        // doesn't require a paired iPhone to be reachable.
+        if let payloadString = String(data: data, encoding: .utf8),
+           let backend = self.backend {
+            Task { @MainActor [backend, payloadString] in
+                await backend.uploadWatchSnapshot(payload: payloadString)
+            }
+        }
+    }
+
+    private func encodedSnapshotData(_ snapshot: WatchSnapshot) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return try? encoder.encode(snapshot)
+    }
+
+    private func currentSnapshotPayload() -> [String: Any]? {
+        guard let container = modelContainer else { return nil }
+        let context = ModelContext(container)
+        let habits = (try? context.fetch(FetchDescriptor<Habit>())) ?? []
+        guard let data = encodedSnapshotData(makeSnapshot(habits: habits)) else { return nil }
+        return ["snapshot": data]
+    }
+
+    private func replyPayload(for message: [String: Any]) -> [String: Any] {
+        guard (message[WatchMessageKey.action] as? String) == WatchMessageAction.requestSnapshot,
+              let payload = currentSnapshotPayload()
+        else { return [:] }
+        return payload
     }
 
     // MARK: - Snapshot builder
@@ -286,6 +384,44 @@ final class WatchConnectivityService: NSObject {
         let kind: WatchSnapshot.HabitKind = habit.isAutoVerified ? .healthKit : .manual
         let isCompleted = habit.isSatisfied(on: todayKey)
 
+        // Per-habit "Try 5:30 PM — peak after meetings" chip — same one
+        // the iOS list shows. Pull from the AI advisor's cache when it
+        // has resolved an LLM result; otherwise fall back to the
+        // deterministic heuristic so the watch always has *something*
+        // useful to show. iOS owns the model — the watch is a renderer.
+        let suggestionLabel: String? = {
+            guard !isCompleted else { return nil }
+            let events = CalendarService.shared.todaysEvents
+            let forecast = SleepInsightsService.shared.forecast
+            let shape = HabitTimeSuggestion.TaskShape.classify(
+                canonicalKey: habit.canonicalKey,
+                title: habit.title
+            )
+            let advisor = HabitAITimeAdvisor.shared
+            let cacheKey = advisor.cacheKey(
+                habit: habit,
+                todayKey: todayKey,
+                events: events,
+                forecast: forecast
+            )
+            // Kick off (or re-use) an AI inference so the next snapshot
+            // push picks up the LLM result automatically.
+            advisor.ensureSuggestion(
+                for: habit,
+                todayKey: todayKey,
+                events: events,
+                forecast: forecast
+            )
+            if let ai = advisor.cachedSuggestion(forKey: cacheKey) {
+                return ai.label
+            }
+            return HabitTimeSuggestion.suggest(
+                events: events,
+                forecast: forecast,
+                shape: shape
+            )?.label
+        }()
+
         // Map verification source → unit label for the auto rows. Manual
         // habits default to a binary (target=0).
         let (unitsTarget, unitsLabel): (Int, String) = {
@@ -328,7 +464,8 @@ final class WatchConnectivityService: NSObject {
             unitsLabel: unitsLabel,
             isCompleted: isCompleted,
             sourceLabel: kind == .healthKit ? "APPLE HEALTH" : "",
-            canonicalKey: habit.canonicalKey
+            canonicalKey: habit.canonicalKey,
+            suggestionLabel: suggestionLabel
         )
     }
 
@@ -569,6 +706,33 @@ extension WatchConnectivityService: WCSessionDelegate {
     nonisolated func session(_ session: WCSession,
                               didReceiveMessage message: [String : Any]) {
         Task { @MainActor in
+            self.applyMessage(message)
+        }
+    }
+
+    /// Reply-handler variant of didReceiveMessage. Critical: the watch
+    /// calls `sendMessage(_, replyHandler:, errorHandler:)`, which means
+    /// WCSession holds the message open expecting *us* to invoke the
+    /// reply handler. If we only implemented the no-reply delegate
+    /// (above), the watch's reply waited indefinitely until WCSession
+    /// gave up with `WCErrorCodeTransferTimedOut` — exactly the
+    /// "Transfer timed out · Retry · 53" state the user reported on the
+    /// connecting view despite STATE/REACH/PAIR all reading green.
+    ///
+    /// We reply immediately; `requestSnapshot` replies with a fresh encoded
+    /// snapshot, while mutations get a lightweight ack. The same `applyMessage`
+    /// handler still runs afterward so durable applicationContext / userInfo
+    /// delivery is refreshed too.
+    nonisolated func session(_ session: WCSession,
+                              didReceiveMessage message: [String : Any],
+                              replyHandler: @escaping ([String : Any]) -> Void) {
+        Task { @MainActor in
+            // Reply FIRST so the watch's sendMessage promise resolves before
+            // we do any of the longer SwiftData / network work. For
+            // `requestSnapshot`, include the snapshot in the reply itself so
+            // the watch can leave the connecting screen even if the follow-up
+            // applicationContext delivery is delayed by watchOS.
+            replyHandler(self.replyPayload(for: message))
             self.applyMessage(message)
         }
     }

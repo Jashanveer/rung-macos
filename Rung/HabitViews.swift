@@ -1120,6 +1120,19 @@ struct HabitListSection: View {
     var clusters: [AccountabilityDashboard.HabitTimeCluster] = []
     var stampNamespace: Namespace.ID? = nil
     var isFrozenToday: Bool = false
+    /// Today's energy curve, used by per-habit time chips. Optional so
+    /// the list still renders before HK has built three nights.
+    var forecast: EnergyForecast? = nil
+    /// Today's calendar events — same shape we feed to HabitTimeSuggestion.
+    /// Empty if calendar permission was denied or the user has no events.
+    var todaysEvents: [CalendarEvent] = []
+
+    /// Drives a re-render whenever the AI advisor lands a fresh
+    /// per-habit suggestion. Without this observation, LLM results
+    /// would sit in the advisor's cache until the next unrelated
+    /// SwiftData change forced a redraw — chips would look stale even
+    /// after an inference completed.
+    @ObservedObject private var aiAdvisor = HabitAITimeAdvisor.shared
 
     /// Pulled once per list refresh. Per-habit slices feed each card's
     /// timing-stats pill. SwiftData diffs efficiently so this stays cheap
@@ -1192,12 +1205,58 @@ struct HabitListSection: View {
                         cluster: cluster(for: habit),
                         stampNamespace: stampNamespace,
                         isFrozen: isFrozenToday,
-                        timingStats: habit.localUUID.flatMap { statsByHabit[$0] }
+                        timingStats: habit.localUUID.flatMap { statsByHabit[$0] },
+                        timeSuggestion: suggestion(for: habit)
                     )
                 }
             }
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// AI-generated per-habit time chip. Workouts pick a peak slot,
+    /// chores pick the post-lunch dip, contemplative habits pick the
+    /// wind-down — see `HabitTimeSuggestion.TaskShape`.
+    ///
+    /// On macOS 26+ / iOS 26+ this asks `HabitAITimeAdvisor` to upgrade
+    /// the deterministic suggestion with an on-device LLM reason. Until
+    /// the inference resolves we render the heuristic baseline so the
+    /// chip never blinks empty; the LLM result swaps in when ready via
+    /// `@ObservedObject`.
+    private func suggestion(for habit: Habit) -> HabitTimeSuggestion.Suggestion? {
+        // Already-completed entries don't need a chip — the user has done it.
+        let isDone: Bool = {
+            switch habit.entryType {
+            case .habit: return habit.completedDayKeys.contains(todayKey)
+            case .task:  return habit.isTaskCompleted
+            }
+        }()
+        guard !isDone, !isFrozenToday else { return nil }
+        let shape = HabitTimeSuggestion.TaskShape.classify(
+            canonicalKey: habit.canonicalKey,
+            title: habit.title
+        )
+        let baseline = HabitTimeSuggestion.suggest(
+            events: todaysEvents,
+            forecast: forecast,
+            shape: shape
+        )
+        let advisor = HabitAITimeAdvisor.shared
+        let key = advisor.cacheKey(
+            habit: habit,
+            todayKey: todayKey,
+            events: todaysEvents,
+            forecast: forecast
+        )
+        // Kick off (or re-use) an LLM inference for this habit. Cheap —
+        // idempotent if already running or cached.
+        advisor.ensureSuggestion(
+            for: habit,
+            todayKey: todayKey,
+            events: todaysEvents,
+            forecast: forecast
+        )
+        return advisor.cachedSuggestion(forKey: key) ?? baseline
     }
 }
 
@@ -1284,6 +1343,11 @@ struct HabitCard: View {
     /// Per-habit "usually 7:42 AM · 18 min" rollup, computed by the parent
     /// from `[HabitCompletion]`. Nil for habits without enough samples.
     var timingStats: HabitTimingStats? = nil
+    /// AI-generated "do this around 2 PM — afternoon dip is fine for chores"
+    /// chip rendered under the title row. Computed by the parent (so all
+    /// rows share one forecast snapshot) and nil when the habit is done,
+    /// frozen, or there's no good slot left in the day.
+    var timeSuggestion: HabitTimeSuggestion.Suggestion? = nil
 
     @State private var isHovered = false
     @State private var showArchiveConfirm = false
@@ -1476,6 +1540,14 @@ struct HabitCard: View {
                 if let timingStats, timingStats.isPresentable, !isAutoVerified {
                     HabitTimingStatsPill(stats: timingStats)
                 }
+
+                // Per-habit AI time chip ("do this around 2 PM — afternoon
+                // dip is fine for chores"). Nil for done / frozen / past
+                // last-slot habits. Rendered after the timing stats so the
+                // user sees their existing pattern first, suggestion second.
+                if let timeSuggestion, !effectiveDone {
+                    PerHabitTimeChip(suggestion: timeSuggestion)
+                }
             }
 
             Spacer(minLength: 4)
@@ -1586,6 +1658,64 @@ struct HabitCard: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This task will be removed from your list.")
+        }
+    }
+}
+
+// MARK: - Per-habit time chip
+
+/// AI-suggested clock time + reason rendered inline on each HabitCard.
+/// Replaces the old global "Try 19:30 — peak focus window" pill that sat
+/// above the list. Carries one of four reasons depending on the task
+/// shape — peak / dip / wind-down / flexible — so a workout, a load of
+/// laundry, and "read 20 min" each get a distinct, sensible time.
+///
+/// Tinted by shape so the user can scan the list and see at a glance
+/// which habits are pulling toward the morning peak vs the afternoon
+/// dip vs the evening wind-down. Gold = peak, orange = dip, indigo =
+/// wind-down, slate = flexible.
+private struct PerHabitTimeChip: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let suggestion: HabitTimeSuggestion.Suggestion
+
+    private var tint: Color {
+        switch suggestion.shape {
+        case .peak:     return Color(red: 0.94, green: 0.74, blue: 0.24)   // gold
+        case .dip:      return Color(red: 0.94, green: 0.55, blue: 0.18)   // warm orange
+        case .windDown: return Color.indigo
+        case .flexible: return Color.secondary
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: iconName)
+                .font(.system(size: 8, weight: .bold))
+            Text(suggestion.label)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(colorScheme == .dark ? 0.16 : 0.10))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(tint.opacity(0.30), lineWidth: 0.5)
+        )
+        .accessibilityLabel(Text(suggestion.label))
+    }
+
+    private var iconName: String {
+        switch suggestion.shape {
+        case .peak:     return "bolt.fill"
+        case .dip:      return "tray.full.fill"
+        case .windDown: return "moon.fill"
+        case .flexible: return "clock.fill"
         }
     }
 }
