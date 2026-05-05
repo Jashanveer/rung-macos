@@ -15,6 +15,15 @@ struct WatchSnapshot: Codable, Equatable {
         case healthKit        // auto-checked from HealthKit → read-only ♥ row
     }
 
+    /// Mirrors `Habit.EntryType` on the iPhone — habits are recurring,
+    /// tasks are one-shot. The watch UI uses this to surface a Pomodoro
+    /// long-press affordance on tasks (and to render them with a flag
+    /// glyph instead of the streak heart).
+    enum EntryType: String, Codable {
+        case habit
+        case task
+    }
+
     struct WatchHabit: Codable, Equatable, Identifiable {
         let id: String                 // localUUID stringified, or backendId, fallback to title hash
         let title: String
@@ -27,6 +36,9 @@ struct WatchSnapshot: Codable, Equatable {
         let isCompleted: Bool          // derived: progress >= 1 OR completedDayKeys contains today
         let sourceLabel: String        // for HealthKit rows: "APPLE HEALTH"; manual: ""
         let canonicalKey: String?      // optional — drives drill-in detail behaviour
+        /// `.habit` (recurring) or `.task` (one-shot). Defaults to
+        /// `.habit` on decode so older snapshots stay forward-compatible.
+        let entryType: EntryType
         /// Pre-formatted AI/heuristic time suggestion the iPhone computed.
         /// Mirrors the chip the user sees on iOS/iPadOS/macOS so the
         /// watch experience is consistent — "Try 1:30 PM — afternoon
@@ -49,6 +61,7 @@ struct WatchSnapshot: Codable, Equatable {
             isCompleted: Bool,
             sourceLabel: String,
             canonicalKey: String?,
+            entryType: EntryType = .habit,
             suggestionLabel: String? = nil
         ) {
             self.id = id
@@ -62,6 +75,7 @@ struct WatchSnapshot: Codable, Equatable {
             self.isCompleted = isCompleted
             self.sourceLabel = sourceLabel
             self.canonicalKey = canonicalKey
+            self.entryType = entryType
             self.suggestionLabel = suggestionLabel
         }
 
@@ -71,7 +85,8 @@ struct WatchSnapshot: Codable, Equatable {
         enum CodingKeys: String, CodingKey {
             case id, title, emoji, kind, progress
             case unitsLogged, unitsTarget, unitsLabel
-            case isCompleted, sourceLabel, canonicalKey, suggestionLabel
+            case isCompleted, sourceLabel, canonicalKey
+            case entryType, suggestionLabel
         }
 
         init(from decoder: Decoder) throws {
@@ -87,6 +102,7 @@ struct WatchSnapshot: Codable, Equatable {
             self.isCompleted = try c.decode(Bool.self, forKey: .isCompleted)
             self.sourceLabel = try c.decode(String.self, forKey: .sourceLabel)
             self.canonicalKey = try c.decodeIfPresent(String.self, forKey: .canonicalKey)
+            self.entryType = try c.decodeIfPresent(EntryType.self, forKey: .entryType) ?? .habit
             self.suggestionLabel = try c.decodeIfPresent(String.self, forKey: .suggestionLabel)
         }
     }
@@ -127,6 +143,23 @@ struct WatchSnapshot: Codable, Equatable {
         let notificationsOn: Bool
     }
 
+    // MARK: Energy
+
+    /// Lightweight energy / chronotype payload — 24 normalized samples
+    /// (one per hour, 0...1) plus a "now" marker so the watch can paint
+    /// the curve without recomputing the two-process model. Optional so
+    /// older iOS builds keep encoding without it.
+    struct WatchEnergy: Codable, Equatable {
+        let samples: [Double]            // 24 values, 0...1
+        let nowIndex: Int                // 0..<24, current hour
+        let score: Int                   // 0...100 right-now energy score
+        let label: String                // "STEADY" / "PEAK" / "DIP"
+        let summary: String              // "Two-peak day · 7h 12m sleep"
+        let peakWindow: String           // "17:00–19:00"
+        let wakeIndex: Int               // 0..<24
+        let bedIndex: Int                // 0..<24
+    }
+
     // MARK: Mentor messages
 
     /// One row in the mentor recent-conversations tab. Origin marks who sent
@@ -142,6 +175,50 @@ struct WatchSnapshot: Codable, Equatable {
         let preview: String            // 1-line message body, already truncated by phone
         let relativeTime: String       // "2m" / "1h" / "yest" — phone formats once
         let isUnread: Bool             // mentor-origin only; drives the gold accent
+        /// Full message body so the watch can expand a row to read the
+        /// whole text without bouncing back to the iPhone. Optional so
+        /// older snapshots keep decoding cleanly.
+        let body: String?
+        /// Absolute timestamp so the watch can sort newest-first and
+        /// drop messages older than 24 hours locally.
+        let sentAt: Date?
+
+        init(
+            messageId: String,
+            origin: Origin,
+            senderName: String,
+            preview: String,
+            relativeTime: String,
+            isUnread: Bool,
+            body: String? = nil,
+            sentAt: Date? = nil
+        ) {
+            self.messageId = messageId
+            self.origin = origin
+            self.senderName = senderName
+            self.preview = preview
+            self.relativeTime = relativeTime
+            self.isUnread = isUnread
+            self.body = body
+            self.sentAt = sentAt
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case messageId, origin, senderName
+            case preview, relativeTime, isUnread, body, sentAt
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.messageId = try c.decode(String.self, forKey: .messageId)
+            self.origin = try c.decode(Origin.self, forKey: .origin)
+            self.senderName = try c.decode(String.self, forKey: .senderName)
+            self.preview = try c.decode(String.self, forKey: .preview)
+            self.relativeTime = try c.decode(String.self, forKey: .relativeTime)
+            self.isUnread = try c.decode(Bool.self, forKey: .isUnread)
+            self.body = try c.decodeIfPresent(String.self, forKey: .body)
+            self.sentAt = try c.decodeIfPresent(Date.self, forKey: .sentAt)
+        }
     }
 
     // MARK: Top-level
@@ -160,6 +237,62 @@ struct WatchSnapshot: Codable, Equatable {
     /// Optional so the iPhone can keep broadcasting the legacy snapshot shape
     /// during rollout; the watch falls back to an empty list in that case.
     let mentorMessages: [WatchMentorMessage]?
+    /// Optional energy payload — same forward-compatible decode pattern.
+    let energy: WatchEnergy?
+
+    enum CodingKeys: String, CodingKey {
+        case generatedAt, todayKey, weekdayShort, timeOfDay
+        case pendingHabits, completedHabits, metrics
+        case leaderboard, calendarHeatmap, calendarMonthLabel
+        case account, mentorMessages, energy
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        self.todayKey = try c.decode(String.self, forKey: .todayKey)
+        self.weekdayShort = try c.decode(String.self, forKey: .weekdayShort)
+        self.timeOfDay = try c.decode(String.self, forKey: .timeOfDay)
+        self.pendingHabits = try c.decode([WatchHabit].self, forKey: .pendingHabits)
+        self.completedHabits = try c.decode([WatchHabit].self, forKey: .completedHabits)
+        self.metrics = try c.decode(Metrics.self, forKey: .metrics)
+        self.leaderboard = try c.decode([WatchLeaderboardEntry].self, forKey: .leaderboard)
+        self.calendarHeatmap = try c.decode([String: Double].self, forKey: .calendarHeatmap)
+        self.calendarMonthLabel = try c.decode(String.self, forKey: .calendarMonthLabel)
+        self.account = try c.decode(AccountInfo.self, forKey: .account)
+        self.mentorMessages = try c.decodeIfPresent([WatchMentorMessage].self, forKey: .mentorMessages)
+        self.energy = try c.decodeIfPresent(WatchEnergy.self, forKey: .energy)
+    }
+
+    init(
+        generatedAt: Date,
+        todayKey: String,
+        weekdayShort: String,
+        timeOfDay: String,
+        pendingHabits: [WatchHabit],
+        completedHabits: [WatchHabit],
+        metrics: Metrics,
+        leaderboard: [WatchLeaderboardEntry],
+        calendarHeatmap: [String: Double],
+        calendarMonthLabel: String,
+        account: AccountInfo,
+        mentorMessages: [WatchMentorMessage]?,
+        energy: WatchEnergy? = nil
+    ) {
+        self.generatedAt = generatedAt
+        self.todayKey = todayKey
+        self.weekdayShort = weekdayShort
+        self.timeOfDay = timeOfDay
+        self.pendingHabits = pendingHabits
+        self.completedHabits = completedHabits
+        self.metrics = metrics
+        self.leaderboard = leaderboard
+        self.calendarHeatmap = calendarHeatmap
+        self.calendarMonthLabel = calendarMonthLabel
+        self.account = account
+        self.mentorMessages = mentorMessages
+        self.energy = energy
+    }
 
     // MARK: Empty / placeholder
 
@@ -197,7 +330,8 @@ struct WatchSnapshot: Codable, Equatable {
                 healthKitOn: false,
                 notificationsOn: false
             ),
-            mentorMessages: nil
+            mentorMessages: nil,
+            energy: nil
         )
     }
 
@@ -252,8 +386,24 @@ struct WatchSnapshot: Codable, Equatable {
             mentorMessages: [
                 .init(messageId: "m1", origin: .mentor, senderName: "Aanya",
                       preview: "Proud of the streak. Keep it up tomorrow morning.",
-                      relativeTime: "12m", isUnread: true)
-            ]
+                      relativeTime: "12m", isUnread: true,
+                      body: "Proud of the streak. Keep it up tomorrow morning.",
+                      sentAt: Date().addingTimeInterval(-12 * 60))
+            ],
+            energy: WatchEnergy(
+                samples: [
+                    0.55, 0.50, 0.48, 0.55, 0.62, 0.70, 0.75, 0.78,
+                    0.76, 0.74, 0.70, 0.66, 0.62, 0.67, 0.74, 0.81,
+                    0.86, 0.88, 0.85, 0.78, 0.66, 0.52, 0.42, 0.38
+                ],
+                nowIndex: 17,
+                score: 88,
+                label: "PEAK",
+                summary: "Two-peak day · 7h 12m sleep",
+                peakWindow: "17:00–19:00",
+                wakeIndex: 7,
+                bedIndex: 23
+            )
         )
     }
     #endif

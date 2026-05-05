@@ -124,6 +124,121 @@ struct HabitMetricsTests {
         #expect(m.perfectDays.contains("2026-04-17"))
     }
 
+    @Test func weeklyTargetRestBudgetDoesNotMarkFutureDaysPerfect() {
+        // Monday 2026-05-04: user logs the only gym session of the week.
+        // A 4×/week target leaves a 3-day rest budget. Without the today
+        // cap, isSatisfied happily marks Tue/Wed/Thu as perfect rest days
+        // before they've been lived — lighting up future dots in the
+        // year grid.
+        let habit = Habit(
+            title: "Workout",
+            entryType: .habit,
+            createdAt: DateKey.date(from: "2026-04-01"),
+            completedDayKeys: ["2026-05-04"],
+            weeklyTarget: 4
+        )
+
+        let m = HabitMetrics.compute(for: [habit], todayKey: "2026-05-04")
+        #expect(m.perfectDays.contains("2026-05-04"))
+        #expect(!m.perfectDays.contains("2026-05-05"))
+        #expect(!m.perfectDays.contains("2026-05-06"))
+        #expect(!m.perfectDays.contains("2026-05-07"))
+    }
+
+    @Test func dailySuggestionElectionPrefersHigherDataQuality() {
+        // Mac sees only iCloud (1 calendar), iPhone fuses iCloud + Google
+        // + Exchange (3 calendars) — iPhone's payload should win even
+        // when both arrive on the same day with the same meeting count.
+        let mac = DailySuggestionPayload(
+            dayKey: "2026-05-04",
+            aiHeadline: "Mac headline",
+            meetingCount: 5,
+            meetingMinutes: 240,
+            perHabit: [],
+            dataQuality: 1 * 100 + 5,
+            generatedAt: Date(),
+            generatedBy: "macos"
+        )
+        let iphone = DailySuggestionPayload(
+            dayKey: "2026-05-04",
+            aiHeadline: "iPhone headline",
+            meetingCount: 5,
+            meetingMinutes: 240,
+            perHabit: [],
+            dataQuality: 3 * 100 + 5,
+            generatedAt: Date(),
+            generatedBy: "ios"
+        )
+
+        // The Mac-side election sees iPhone's payload as remote — should adopt it.
+        let elected = HabitBackendStore.electDailySuggestion(local: mac, remote: iphone)
+        #expect(elected.generatedBy == "ios")
+        #expect(elected.aiHeadline == "iPhone headline")
+
+        // The Mac shouldn't bother uploading when remote outranks it.
+        #expect(HabitBackendStore.localShouldUpload(local: mac, remote: iphone) == false)
+
+        // Reverse: an iPhone arriving second sees the Mac's older
+        // payload as remote — iPhone is richer, takes over, AND uploads.
+        let electedReverse = HabitBackendStore.electDailySuggestion(local: iphone, remote: mac)
+        #expect(electedReverse.generatedBy == "ios")
+        #expect(HabitBackendStore.localShouldUpload(local: iphone, remote: mac) == true)
+    }
+
+    @Test func dailySuggestionElectionUsesLocalWhenNoRemote() {
+        // Mac-only user: no remote payload exists → local is the canonical
+        // value, and we should upload it so future devices read it back.
+        let local = DailySuggestionPayload(
+            dayKey: "2026-05-04",
+            aiHeadline: "lone wolf",
+            meetingCount: 0,
+            meetingMinutes: 0,
+            perHabit: [],
+            dataQuality: 100,
+            generatedAt: Date(),
+            generatedBy: "macos"
+        )
+        let elected = HabitBackendStore.electDailySuggestion(local: local, remote: nil)
+        #expect(elected == local)
+        #expect(HabitBackendStore.localShouldUpload(local: local, remote: nil) == true)
+    }
+
+    @Test func dailySuggestionElectionTieGoesToRemote() {
+        // Equal dataQuality → remote wins (server is authoritative).
+        // This avoids ping-pong uploads between two equally-rich devices.
+        let local = DailySuggestionPayload(
+            dayKey: "2026-05-04", aiHeadline: nil, meetingCount: 2,
+            meetingMinutes: 60, perHabit: [], dataQuality: 105,
+            generatedAt: Date(), generatedBy: "ios"
+        )
+        let remote = DailySuggestionPayload(
+            dayKey: "2026-05-04", aiHeadline: "stable", meetingCount: 2,
+            meetingMinutes: 60, perHabit: [], dataQuality: 105,
+            generatedAt: Date(), generatedBy: "ipados"
+        )
+        let elected = HabitBackendStore.electDailySuggestion(local: local, remote: remote)
+        #expect(elected.generatedBy == "ipados")
+        #expect(HabitBackendStore.localShouldUpload(local: local, remote: remote) == false)
+    }
+
+    @Test func dailySuggestionElectionDifferentDaysFallsBackToLocal() {
+        // Stale remote (yesterday's payload) shouldn't override today's
+        // local one — we never want to render a different day's data.
+        let today = DailySuggestionPayload(
+            dayKey: "2026-05-04", aiHeadline: "today", meetingCount: 0,
+            meetingMinutes: 0, perHabit: [], dataQuality: 0,
+            generatedAt: Date(), generatedBy: "macos"
+        )
+        let yesterday = DailySuggestionPayload(
+            dayKey: "2026-05-03", aiHeadline: "stale", meetingCount: 99,
+            meetingMinutes: 999, perHabit: [], dataQuality: 9999,
+            generatedAt: Date(), generatedBy: "macos"
+        )
+        let elected = HabitBackendStore.electDailySuggestion(local: today, remote: yesterday)
+        #expect(elected.dayKey == "2026-05-04")
+        #expect(HabitBackendStore.localShouldUpload(local: today, remote: yesterday) == true)
+    }
+
     @Test func backendHabitFallsBackToEarliestCompletedDateForLocalCreationDate() {
         let remote = BackendHabit(
             id: 42,
@@ -589,9 +704,11 @@ struct HabitTimeSuggestionShapeTests {
     typealias Shape = HabitTimeSuggestion.TaskShape
 
     @Test func canonicalKeysMapToExpectedShapes() {
-        #expect(Shape.classify(canonicalKey: "workout",  title: "")  == .peak)
-        #expect(Shape.classify(canonicalKey: "run",      title: "")  == .peak)
-        #expect(Shape.classify(canonicalKey: "study",    title: "")  == .peak)
+        #expect(Shape.classify(canonicalKey: "workout",  title: "")  == .physicalPeak)
+        #expect(Shape.classify(canonicalKey: "run",      title: "")  == .physicalPeak)
+        #expect(Shape.classify(canonicalKey: "swim",     title: "")  == .physicalPeak)
+        #expect(Shape.classify(canonicalKey: "cycle",    title: "")  == .physicalPeak)
+        #expect(Shape.classify(canonicalKey: "study",    title: "")  == .mentalPeak)
         #expect(Shape.classify(canonicalKey: "read",     title: "")  == .windDown)
         #expect(Shape.classify(canonicalKey: "meditate", title: "")  == .windDown)
         #expect(Shape.classify(canonicalKey: "journal",  title: "")  == .windDown)
@@ -606,11 +723,18 @@ struct HabitTimeSuggestionShapeTests {
         #expect(Shape.classify(canonicalKey: nil, title: "Cook dinner")        == .dip)
     }
 
-    @Test func keywordFallbackPicksPeakForCognitiveWork() {
-        #expect(Shape.classify(canonicalKey: nil, title: "Gym 6 AM")           == .peak)
-        #expect(Shape.classify(canonicalKey: nil, title: "Deep work block")    == .peak)
-        #expect(Shape.classify(canonicalKey: nil, title: "Code review session") == .peak)
-        #expect(Shape.classify(canonicalKey: nil, title: "Study for exam")     == .peak)
+    @Test func keywordFallbackPicksPhysicalForExercise() {
+        #expect(Shape.classify(canonicalKey: nil, title: "Gym 6 AM")           == .physicalPeak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Tennis match")       == .physicalPeak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Climbing session")   == .physicalPeak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Boxing class")       == .physicalPeak)
+    }
+
+    @Test func keywordFallbackPicksMentalForCognitiveWork() {
+        #expect(Shape.classify(canonicalKey: nil, title: "Deep work block")    == .mentalPeak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Code review session") == .mentalPeak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Study for exam")     == .mentalPeak)
+        #expect(Shape.classify(canonicalKey: nil, title: "Research paper")     == .mentalPeak)
     }
 
     @Test func keywordFallbackPicksWindDownForContemplative() {

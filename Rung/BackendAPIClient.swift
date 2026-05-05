@@ -4,8 +4,46 @@ import Foundation
 
 actor BackendAPIClient {
     private let baseURL = BackendEnvironment.baseURL
-    private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
+    /// JSON decoder configured to parse Spring's default ISO-8601 timestamps
+    /// (`Instant`/`OffsetDateTime` are serialized with fractional seconds —
+    /// e.g. `"2026-05-04T15:22:00.123456789Z"`). Default Swift behavior is
+    /// `.deferredToDate` which expects a Double seconds-since-2001 and fails
+    /// silently on these strings. This silent failure is what kept the sleep
+    /// snapshot, watch snapshot, and any other Date-bearing DTO from ever
+    /// round-tripping cleanly: server saved fine, response decode threw
+    /// `DecodingError`, callers wrapped it in `try?` and showed empty state.
+    private let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        let withFractional = ISO8601DateFormatter()
+        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let withoutFractional = ISO8601DateFormatter()
+        withoutFractional.formatOptions = [.withInternetDateTime]
+        d.dateDecodingStrategy = .custom { dec in
+            let container = try dec.singleValueContainer()
+            // Tolerate both numeric (legacy) and string (Spring) formats.
+            if let raw = try? container.decode(String.self) {
+                if let date = withFractional.date(from: raw) { return date }
+                if let date = withoutFractional.date(from: raw) { return date }
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Expected ISO-8601 date, got: \(raw)"
+                )
+            }
+            if let secs = try? container.decode(Double.self) {
+                return Date(timeIntervalSince1970: secs)
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Date is neither ISO-8601 string nor numeric seconds-since-1970"
+            )
+        }
+        return d
+    }()
+    private let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }()
     private var session: BackendSession?
     let retryPolicy: RetryPolicy
     /// Monotonic counter that increments on every session boundary

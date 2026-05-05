@@ -89,18 +89,42 @@ extension HabitBackendStore {
 
     /// Push the local sleep snapshot to the backend so other devices
     /// (notably macOS, where HK isn't available) can read what iOS
-    /// computed. Fire-and-forget — failures don't bubble up to the UI.
+    /// computed. Fire-and-forget — failures don't bubble up to the UI
+    /// but DO log so silent breakage is visible in the unified log.
     func uploadSleepSnapshot(_ snapshot: BackendSleepSnapshot) async {
-        guard token != nil else { return }
-        _ = try? await sleepSnapshotRepository.upload(snapshot)
+        guard token != nil else {
+            print("[SleepSync] upload skipped — no token")
+            return
+        }
+        do {
+            _ = try await sleepSnapshotRepository.upload(snapshot)
+            print("[SleepSync] upload OK (sampleCount=\(snapshot.sampleCount))")
+        } catch {
+            print("[SleepSync] upload FAILED: \(error)")
+        }
     }
 
-    /// Read the most recent server-side snapshot. Used by macOS to
+    /// Read the most recent server-side snapshot. Used by macOS / iPad to
     /// hydrate `SleepInsightsService` when local HK data isn't available.
-    /// Returns nil on no-row, network failure, or unauthenticated state.
+    /// Returns nil on no-row, network failure, or unauthenticated state —
+    /// all three log so we can tell them apart in the device log.
     func fetchSleepSnapshot() async -> BackendSleepSnapshot? {
-        guard token != nil else { return nil }
-        return try? await sleepSnapshotRepository.fetch()
+        guard token != nil else {
+            print("[SleepSync] fetch skipped — no token")
+            return nil
+        }
+        do {
+            let snap = try await sleepSnapshotRepository.fetch()
+            if snap == nil {
+                print("[SleepSync] fetch returned nil — server has no row yet")
+            } else {
+                print("[SleepSync] fetch OK (sampleCount=\(snap?.sampleCount ?? 0))")
+            }
+            return snap
+        } catch {
+            print("[SleepSync] fetch FAILED: \(error)")
+            return nil
+        }
     }
 
     /// Push the iPhone-built `WatchSnapshot` JSON to the backend so the

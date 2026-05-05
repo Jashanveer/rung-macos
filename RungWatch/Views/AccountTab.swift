@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(WatchKit)
+import WatchKit
+#endif
 
 /// Account / settings — avatar + display name as the hero, then a small
 /// settings list. Includes the watchOS-only **Display size** picker so
@@ -6,23 +9,81 @@ import SwiftUI
 /// too small.
 struct AccountTab: View {
     @EnvironmentObject private var session: WatchSession
+    @EnvironmentObject private var backend: WatchBackendStore
     @Environment(\.watchFontScale) private var scale: Double
     @AppStorage("watchFontScaleRaw") private var fontScaleRaw: Double = WatchFontScale.default.rawValue
+
+    /// Two-step logout — first tap arms the danger button, second tap
+    /// commits. Prevents an accidental side-of-watch press from
+    /// silently signing the user out and forcing a re-pair.
+    @State private var logoutArmed: Bool = false
 
     private var account: WatchSnapshot.AccountInfo { session.snapshot.account }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
+                WatchPageTitle("Account", accent: WatchTheme.cViolet)
                 avatarHero
                 fontScalePicker
                 settingRows
+                logoutButton
             }
             .padding(.horizontal, 12)
             .padding(.top, 4)
             .padding(.bottom, 12)
         }
-        .containerBackground(WatchTheme.bg.gradient, for: .tabView)
+        .watchWashBackground(.twilight)
+    }
+
+    // MARK: - Logout
+
+    private var logoutButton: some View {
+        Button {
+            if logoutArmed {
+                signOut()
+            } else {
+                withAnimation(WatchMotion.snappy) { logoutArmed = true }
+                #if canImport(WatchKit)
+                WKInterfaceDevice.current().play(.notification)
+                #endif
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: logoutArmed
+                      ? "exclamationmark.triangle.fill"
+                      : "rectangle.portrait.and.arrow.right")
+                    .font(.system(size: 13 * scale, weight: .heavy))
+                    .foregroundStyle(.white)
+                Text(logoutArmed ? "Tap again to confirm" : "Log out")
+                    .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
+                    .foregroundStyle(.white)
+                Spacer()
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity)
+            .liquidGlassSurface(
+                cornerRadius: 12,
+                tint: WatchTheme.cRose,
+                strong: logoutArmed
+            )
+        }
+        .buttonStyle(WatchPressStyle())
+        .padding(.top, 6)
+    }
+
+    /// Clears every cache the watch keeps for the current account so
+    /// the next launch lands on the connecting / Sign-in-with-Apple
+    /// screen exactly like a fresh install.
+    private func signOut() {
+        WatchAuthStore.shared.clear()
+        backend.stop()
+        session.signOut()
+        logoutArmed = false
+        #if canImport(WatchKit)
+        WKInterfaceDevice.current().play(.success)
+        #endif
     }
 
     // MARK: - Avatar hero
@@ -64,6 +125,7 @@ struct AccountTab: View {
 
             HStack(spacing: 4) {
                 ForEach(WatchFontScale.allCases) { option in
+                    let selected = fontScaleRaw == option.rawValue
                     Button {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                             fontScaleRaw = option.rawValue
@@ -72,15 +134,13 @@ struct AccountTab: View {
                         Text(option.label)
                             .font(WatchTheme.font(.caption, scale: option.rawValue,
                                                    weight: .semibold))
-                            .foregroundStyle(fontScaleRaw == option.rawValue
-                                              ? .white : WatchTheme.inkSoft)
+                            .foregroundStyle(selected ? .white : WatchTheme.inkSoft)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(fontScaleRaw == option.rawValue
-                                          ? AnyShapeStyle(WatchTheme.brandGradient)
-                                          : AnyShapeStyle(Color.white.opacity(0.07)))
+                            .liquidGlassSurface(
+                                cornerRadius: 9,
+                                tint: selected ? WatchTheme.cCyan : nil,
+                                strong: selected
                             )
                     }
                     .buttonStyle(.plain)
@@ -148,16 +208,7 @@ private struct SettingRow: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(LinearGradient(colors: [Color.white.opacity(0.06),
-                                              Color.white.opacity(0.02)],
-                                     startPoint: .top, endPoint: .bottom))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-        )
+        .liquidGlassSurface(cornerRadius: 11)
     }
 }
 

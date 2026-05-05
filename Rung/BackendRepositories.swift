@@ -437,6 +437,54 @@ struct PreferencesRepository {
     private struct PreferencesUpdateRequest: Encodable { let emailOptIn: Bool }
 }
 
+/// Cross-device source-of-truth for the day's nudge + meeting summary +
+/// per-habit time hints. See `DailySuggestionPayload` for the rationale.
+///
+/// Server contract:
+///   GET  /api/users/me/daily-suggestion?date=yyyy-MM-dd
+///        → 200 with the stored payload, or 404 when nothing's been
+///          posted for that day yet.
+///   PUT  /api/users/me/daily-suggestion
+///        → upsert keyed by (user_id, dayKey). Server should accept
+///          only when the incoming `dataQuality` is strictly greater
+///          than the stored row's, returning the chosen winner either
+///          way (so a rejected client knows the canonical state). A
+///          200 with the existing payload is fine; clients treat it
+///          the same as a successful write.
+///
+/// Until the server endpoint exists this repository's calls fail with
+/// a 404 / network error and the coordinator simply keeps using the
+/// locally-computed payload — single-device users are unaffected.
+struct DailySuggestionRepository {
+    let client: BackendAPIClient
+
+    /// Returns the canonical payload for `dayKey`, or nil when the
+    /// server hasn't seen one yet (404). Other errors propagate so the
+    /// coordinator can decide whether to retry or fall back to local.
+    func get(dayKey: String) async throws -> DailySuggestionPayload? {
+        do {
+            let payload: DailySuggestionPayload = try await client.authorizedRequest(
+                path: "/api/users/me/daily-suggestion?date=\(dayKey)",
+                method: "GET"
+            )
+            return payload
+        } catch HabitBackendError.notFound {
+            return nil
+        }
+    }
+
+    /// Upserts our locally-computed payload. Server may return its own
+    /// stored copy when our `dataQuality` doesn't beat what's there;
+    /// either way the response is the canonical value going forward.
+    func upsert(_ payload: DailySuggestionPayload) async throws -> DailySuggestionPayload {
+        try await client.authorizedRequest(
+            path: "/api/users/me/daily-suggestion",
+            method: "PUT",
+            body: payload
+        )
+    }
+}
+
 struct AccountabilityRepository {
     let client: BackendAPIClient
 

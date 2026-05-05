@@ -117,6 +117,16 @@ extension HabitBackendStore {
             applyDashboardUpdate(value)
             messageRequestState = .success(())
             errorMessage = nil
+        } catch HabitBackendError.network {
+            // Offline send — queue the message in the local outbox so
+            // it auto-drains the moment we regain connectivity. Surface
+            // a soft "queued" status instead of a hard send-failure
+            // toast: the user wrote it, we promised to deliver it, and
+            // we're holding the receipt.
+            setAIMentorTyping(false, matchId: matchId)
+            enqueueOutboundMentorMessage(matchId: matchId, body: trimmed)
+            messageRequestState = .success(())
+            errorMessage = Self.offlineStatusMessage
         } catch {
             setAIMentorTyping(false, matchId: matchId)
             handleAuthenticatedRequestError(error)

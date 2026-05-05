@@ -111,6 +111,17 @@ final class CalendarService: ObservableObject {
         }
     }
 
+    /// Number of distinct calendar accounts EventKit currently exposes
+    /// to us. Drives the cross-device `dataQuality` score so a Mac that
+    /// only sees iCloud (1 calendar) doesn't overwrite an iPhone payload
+    /// that fused four (iCloud + Google + Exchange + local). When access
+    /// hasn't been granted we report 0 so an unauthorised device never
+    /// outranks an authorised one.
+    var visibleCalendarCount: Int {
+        guard isAuthorized else { return 0 }
+        return store.calendars(for: .event).count
+    }
+
     /// Naive matcher: returns events whose title shares a meaningful word
     /// (≥4 letters) with `taskTitle`. Stop-words ("the", "a", "and", …)
     /// are filtered out so a task called "the report" doesn't match every

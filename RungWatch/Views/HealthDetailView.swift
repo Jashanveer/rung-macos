@@ -87,7 +87,7 @@ struct HealthDetailView: View {
         .padding(.top, 2)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .containerBackground(WatchTheme.bg.gradient, for: .navigation)
+        .watchWashNavigationBackground(.cyan)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("\u{2039}") { dismiss() }

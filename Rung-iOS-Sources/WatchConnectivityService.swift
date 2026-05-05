@@ -274,16 +274,29 @@ final class WatchConnectivityService: NSObject {
             return f.string(from: now)
         }()
 
-        // Split habits into pending / completed so the watch can render
-        // strikethroughs without recomputing.
+        // Split entries into pending / completed so the watch can render
+        // strikethroughs without recomputing. Tasks (entryType == .task)
+        // travel alongside habits — the watch surfaces them with a flag
+        // glyph and a long-press → Pomodoro affordance instead of the
+        // streak heart.
         var pending: [WatchSnapshot.WatchHabit] = []
         var completed: [WatchSnapshot.WatchHabit] = []
-        let activeHabits = habits.filter { habit in
-            !habit.isArchived
-                && habit.entryType == .habit
-                && (habit.weeklyTarget.map { habit.completionsInWeek(containing: now) < $0 } ?? true)
+        let activeEntries = habits.filter { habit in
+            guard !habit.isArchived else { return false }
+            switch habit.entryType {
+            case .habit:
+                // Hide a frequency-habit once this ISO week's count is
+                // already met, same as iPhone Today list.
+                return habit.weeklyTarget.map {
+                    habit.completionsInWeek(containing: now) < $0
+                } ?? true
+            case .task:
+                // Tasks stick around until completed; once done, they
+                // ride in `completedHabits` for the strikethrough.
+                return true
+            }
         }
-        for habit in activeHabits {
+        for habit in activeEntries {
             let watchHabit = makeWatchHabit(from: habit, todayKey: todayKey)
             if watchHabit.isCompleted {
                 completed.append(watchHabit)
@@ -291,6 +304,9 @@ final class WatchConnectivityService: NSObject {
                 pending.append(watchHabit)
             }
         }
+        // Heatmap cares about habits only — tasks aren't part of the
+        // perfect-day math and would skew the streak month otherwise.
+        let activeHabits = activeEntries.filter { $0.entryType == .habit }
 
         // Leaderboard — prefer the backend's view; fall back to a single-user
         // entry so the Friends tab isn't empty for offline / brand-new users.
@@ -368,7 +384,59 @@ final class WatchConnectivityService: NSObject {
             calendarHeatmap: calendarHeatmap,
             calendarMonthLabel: monthLabel,
             account: account,
-            mentorMessages: makeMentorMessages(now: now)
+            mentorMessages: makeMentorMessages(now: now),
+            energy: makeEnergy(now: now)
+        )
+    }
+
+    /// Sample today's `EnergyForecast` once per hour into the small
+    /// payload the watch's chronotype curve renders. Returns nil when
+    /// HealthKit hasn't produced a forecast yet — the watch falls back
+    /// to a flat-curve placeholder in that case.
+    private func makeEnergy(now: Date) -> WatchSnapshot.WatchEnergy? {
+        guard let forecast = SleepInsightsService.shared.forecast else { return nil }
+        let cal = Calendar.current
+        let startOfDay = cal.startOfDay(for: now)
+        var samples: [Double] = []
+        samples.reserveCapacity(24)
+        for hour in 0..<24 {
+            let instant = startOfDay.addingTimeInterval(Double(hour) * 3600)
+            samples.append(forecast.energy(at: instant) / 100.0)
+        }
+        let nowIndex = cal.component(.hour, from: now)
+        let score = Int(forecast.energy(at: now).rounded())
+        let band = EnergyForecast.label(for: forecast.energy(at: now)).label.uppercased()
+        let wakeIndex = cal.component(.hour, from: forecast.wakeTime)
+        let bedIndex = cal.component(.hour, from: forecast.bedTime)
+
+        // Peak window — the next peak in today's remaining hours, or the
+        // overall acrophase as a fallback.
+        let peakWindow: String = {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "H:mm"
+            let candidate = forecast.nextPeak(after: now, until: forecast.bedTime)
+                ?? forecast.circadianPeak
+            let start = candidate
+            let end = candidate.addingTimeInterval(2 * 3600)
+            return "\(formatter.string(from: start))–\(formatter.string(from: end))"
+        }()
+
+        let summary: String = {
+            let hours = max(0, forecast.bedTime.timeIntervalSince(forecast.wakeTime))
+            let h = Int(hours / 3600)
+            let m = Int((hours - Double(h) * 3600) / 60)
+            return "Today's curve · \(h)h \(m)m awake"
+        }()
+
+        return WatchSnapshot.WatchEnergy(
+            samples: samples,
+            nowIndex: nowIndex,
+            score: score,
+            label: band,
+            summary: summary,
+            peakWindow: peakWindow,
+            wakeIndex: wakeIndex,
+            bedIndex: bedIndex
         )
     }
 
@@ -380,18 +448,40 @@ final class WatchConnectivityService: NSObject {
         guard let messages = backend?.dashboard?.menteeDashboard.messages,
               !messages.isEmpty else { return nil }
         let me = backend?.currentUserId
-        let recent = messages.suffix(8)
+        // Send the most recent 24 hours' worth (capped at 16) so the
+        // watch can locally enforce the past-24h filter the user asked
+        // for. Older messages are dropped on the iPhone to save bytes.
+        let cutoff = now.addingTimeInterval(-24 * 60 * 60)
+        let recent = messages
+            .suffix(16)
+            .filter { msg in
+                guard let date = parseISO(msg.createdAt) else { return true }
+                return date >= cutoff
+            }
         return recent.map { msg in
             let isMe = me.map { $0 == String(msg.senderId) } ?? false
+            let sentAt = parseISO(msg.createdAt)
             return WatchSnapshot.WatchMentorMessage(
                 messageId: String(msg.id),
                 origin: isMe ? .me : .mentor,
                 senderName: isMe ? "You" : msg.senderName,
                 preview: previewLine(from: msg.message),
                 relativeTime: relativeStamp(iso: msg.createdAt, now: now),
-                isUnread: !isMe && msg.nudge
+                isUnread: !isMe && msg.nudge,
+                body: msg.message,
+                sentAt: sentAt
             )
         }
+    }
+
+    /// Best-effort ISO8601 parser shared by `relativeStamp` + the new
+    /// `sentAt` payload. Tries fractional seconds first (most messages),
+    /// then plain ISO, returning nil so the caller can decide what to do
+    /// when a server timestamp is malformed.
+    private func parseISO(_ iso: String) -> Date? {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
     }
 
     private func previewLine(from raw: String) -> String {
@@ -489,6 +579,9 @@ final class WatchConnectivityService: NSObject {
             return "t:\(habit.title.lowercased())"
         }()
 
+        let entryType: WatchSnapshot.EntryType =
+            habit.entryType == .task ? .task : .habit
+
         return WatchSnapshot.WatchHabit(
             id: id,
             title: habit.title,
@@ -501,6 +594,7 @@ final class WatchConnectivityService: NSObject {
             isCompleted: isCompleted,
             sourceLabel: kind == .healthKit ? "APPLE HEALTH" : "",
             canonicalKey: habit.canonicalKey,
+            entryType: entryType,
             suggestionLabel: suggestionLabel
         )
     }

@@ -4,6 +4,8 @@ struct MentorChatBubble: View {
     let mentorName: String
     var isAI: Bool = false
     /// Already sorted chronologically (oldest → newest) by HabitBackendStore.
+    /// The bubble itself flips this to newest-first for display so the
+    /// latest message is the first thing the user sees.
     let messages: [AccountabilityDashboard.Message]
     /// True while we're waiting on the AI mentor's reply. Renders a
     /// three-dot typing bubble below the last message so the user gets
@@ -15,6 +17,11 @@ struct MentorChatBubble: View {
     /// a recoverable error. nil hides the row.
     var inlineError: String? = nil
     var currentUserId: String? = nil
+    /// Messages the user wrote while offline, in submission order.
+    /// Rendered above the server transcript with a "queued" pill so
+    /// the user can see what's waiting to send. Empty when there's
+    /// nothing in the outbox for this match.
+    var queuedMessages: [OutboundMentorMessage] = []
     let onSend: () -> Void
     let onClose: () -> Void
     var isExpanded: Bool = false
@@ -23,9 +30,16 @@ struct MentorChatBubble: View {
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var inputFocused: Bool
 
-    // Sentinel placed at the bottom of the scroll contents so we can anchor
-    // auto-scroll to a stable target regardless of message count.
-    private let bottomAnchorID = "chat-bottom-anchor"
+    // Sentinel placed at the TOP of the scroll contents — we render
+    // newest-first now, so this is the auto-scroll anchor.
+    private let topAnchorID = "chat-top-anchor"
+
+    /// Newest-first display order. The user explicitly asked for the
+    /// latest message at the top so they don't have to scroll past
+    /// stale history every time the chat opens.
+    private var displayMessages: [AccountabilityDashboard.Message] {
+        messages.reversed()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,12 +88,37 @@ struct MentorChatBubble: View {
 
             Divider()
 
-            // Messages — rendered oldest → newest, with a typing row at the
-            // tail and auto-scroll to the bottom on any change.
+            // Messages — rendered NEWEST → OLDEST. Typing indicator and
+            // the empty-state both pin to the top so a fresh inbound
+            // reply slides in above the older history.
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        if messages.isEmpty && !isMentorTyping {
+                        // Top sentinel for auto-scroll-to-newest.
+                        Color.clear
+                            .frame(height: 1)
+                            .id(topAnchorID)
+
+                        if isMentorTyping {
+                            TypingIndicatorRow(mentorName: mentorName)
+                                .id("typing-indicator")
+                                .transition(.asymmetric(
+                                    insertion: .scale(scale: 0.85, anchor: .topLeading).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                        }
+
+                        // Queued (offline) messages appear above the
+                        // server transcript so the user can see what's
+                        // waiting to deliver. Reverse to keep
+                        // newest-first like the rest of the thread.
+                        ForEach(queuedMessages.reversed()) { entry in
+                            QueuedMessageRow(message: entry)
+                                .id(entry.id)
+                                .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+                        }
+
+                        if messages.isEmpty && !isMentorTyping && queuedMessages.isEmpty {
                             Text("Say hi to your mentor!")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
@@ -87,35 +126,26 @@ struct MentorChatBubble: View {
                                 .padding(.top, 40)
                         }
 
-                        ForEach(messages) { msg in
+                        ForEach(displayMessages) { msg in
                             ChatMessageRow(message: msg, isFromCurrentUser: isFromCurrentUser(msg))
                                 .id(msg.id)
-                        }
-
-                        if isMentorTyping {
-                            TypingIndicatorRow(mentorName: mentorName)
-                                .id("typing-indicator")
                                 .transition(.asymmetric(
-                                    insertion: .scale(scale: 0.85, anchor: .bottomLeading).combined(with: .opacity),
+                                    insertion: .scale(scale: 0.92, anchor: .top).combined(with: .opacity),
                                     removal: .opacity
                                 ))
                         }
-
-                        // Empty sentinel we can always scroll to.
-                        Color.clear
-                            .frame(height: 1)
-                            .id(bottomAnchorID)
                     }
                     .padding(10)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: messages.count)
                 }
                 .onChange(of: messages.count) { _, _ in
-                    scrollToBottom(proxy: proxy, animated: true)
+                    scrollToTop(proxy: proxy, animated: true)
                 }
                 .onChange(of: isMentorTyping) { _, _ in
-                    scrollToBottom(proxy: proxy, animated: true)
+                    scrollToTop(proxy: proxy, animated: true)
                 }
                 .onAppear {
-                    scrollToBottom(proxy: proxy, animated: false)
+                    scrollToTop(proxy: proxy, animated: false)
                 }
             }
 
@@ -184,14 +214,18 @@ struct MentorChatBubble: View {
         )
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        let target = isMentorTyping ? "typing-indicator" : bottomAnchorID
+    private func scrollToTop(proxy: ScrollViewProxy, animated: Bool) {
+        // With newest-first ordering, the freshest content lives at the
+        // top of the scroll view — anchor on the typing indicator when
+        // it's showing, else the top sentinel. Either way, the user
+        // lands on the latest message without scrolling.
+        let target = isMentorTyping ? "typing-indicator" : topAnchorID
         if animated {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                proxy.scrollTo(target, anchor: .bottom)
+                proxy.scrollTo(target, anchor: .top)
             }
         } else {
-            proxy.scrollTo(target, anchor: .bottom)
+            proxy.scrollTo(target, anchor: .top)
         }
     }
 
@@ -263,6 +297,44 @@ private struct TypingIndicatorRow: View {
     private var bubbleColor: Color {
         colorScheme == .dark
             ? Color.white.opacity(0.08)
+            : Color(red: 0.93, green: 0.93, blue: 0.95)
+    }
+}
+
+/// Queued chat row — the user wrote this offline, the outbox holds
+/// it, and a clock-pill says "queued · will send when online" so the
+/// user knows their message wasn't lost. Mirrors the right-aligned
+/// `ChatMessageRow` "from current user" layout for visual continuity.
+private struct QueuedMessageRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let message: OutboundMentorMessage
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 40)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(message.body)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(bubbleColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 8.5, weight: .semibold))
+                    Text("queued · will send when online")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .tracking(0.3)
+                }
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var bubbleColor: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.10)
             : Color(red: 0.93, green: 0.93, blue: 0.95)
     }
 }

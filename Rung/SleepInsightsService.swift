@@ -95,20 +95,26 @@ final class SleepInsightsService: ObservableObject {
         await refreshFromHealthKit(nights: nights)
     }
 
-    /// HealthKit-driven refresh path. iOS reads HK and uploads to the
-    /// backend; macOS skips HK entirely (Mac apps either don't have HK
-    /// data or have stale samples) and goes straight to the server-side
-    /// snapshot the iPhone wrote. After computing locally on iOS, pushes
-    /// the snapshot to the backend so other devices can read it.
+    /// HealthKit-driven refresh path. iPhone reads HK and uploads to the
+    /// backend; iPad and macOS skip HK entirely (Apple Watch pairs with
+    /// iPhone, not iPad — iPad's HK store is almost always empty unless
+    /// the user manually toggles iCloud Health sync) and pull the
+    /// iPhone-uploaded snapshot from the server so the energy view
+    /// renders cross-device without sitting on the empty state.
     private func refreshFromHealthKit(nights: Int) async {
         #if os(macOS)
-        // macOS Apple Health rarely has actual sleep samples — they live
-        // on iPhone/Watch. Always pull the backend snapshot directly so
-        // the energy view renders the iPhone-derived data instead of
-        // sitting on the empty state.
         await refreshFromBackend()
         return
         #else
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // iPad rarely has its own sleep data — Apple Watch pairs to
+            // iPhone, and HKHealthStore.isHealthDataAvailable() returns
+            // true on iPad even when no samples exist, which routed us
+            // through a futile HK query before falling back. Go straight
+            // to the backend so iPad mirrors iPhone within seconds.
+            await refreshFromBackend()
+            return
+        }
         guard HKHealthStore.isHealthDataAvailable(),
               let sleepType = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else {
             // HK isn't available on this device — try the backend

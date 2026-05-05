@@ -68,7 +68,33 @@ struct WatchBackendClient {
     /// Fetch the latest watch snapshot the iPhone uploaded. Returns the
     /// decoded `WatchSnapshot` (the same type the WC channel decodes
     /// into) plus the server-stamped freshness timestamp.
+    ///
+    /// On a 401 we transparently refresh the access token (using the
+    /// stored refresh token) and retry once before propagating
+    /// `.unauthorized`. This is the path that turns the watch into a
+    /// genuinely standalone client — the user no longer has to open
+    /// the iPhone after a token expiry to keep the watch live.
     func fetchSnapshot() async throws -> (snapshot: WatchSnapshot, updatedAt: Date) {
+        // Pre-emptive refresh — when the token has under 5 min left we
+        // refresh right away so a long-running fetch doesn't race the
+        // expiry and waste a request on a guaranteed-401.
+        await preemptivelyRefreshIfStale()
+        do {
+            return try await performSnapshotRequest()
+        } catch Error.unauthorized {
+            // Token rejected — try one refresh + retry. If that also
+            // fails the user has to re-authenticate (rare path; the
+            // refresh token usually outlives the access token by weeks).
+            try await refreshAccessToken()
+            return try await performSnapshotRequest()
+        }
+    }
+
+    /// One-shot `/api/watch/snapshot` GET with the currently-stored
+    /// access token. Pulled out of `fetchSnapshot` so the outer logic
+    /// can call it twice — once with the original token, once after a
+    /// refresh.
+    private func performSnapshotRequest() async throws -> (snapshot: WatchSnapshot, updatedAt: Date) {
         guard let token = WatchAuthStore.shared.current()?.accessToken else {
             throw Error.noToken
         }
@@ -107,6 +133,75 @@ struct WatchBackendClient {
         default:
             throw Error.http(http.statusCode)
         }
+    }
+
+    // MARK: - Token refresh
+
+    /// Trade the stored refresh token for a new access token via the
+    /// same `/api/auth/refresh` endpoint the iPhone uses. On success
+    /// the new tokens are persisted to `WatchAuthStore` and the next
+    /// `performSnapshotRequest` call will pick them up automatically.
+    func refreshAccessToken() async throws {
+        guard let stored = WatchAuthStore.shared.current(),
+              let refreshToken = stored.refreshToken,
+              !refreshToken.isEmpty else {
+            throw Error.unauthorized
+        }
+        var request = URLRequest(url: Self.baseURL.appendingPathComponent("api/auth/refresh"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONEncoder().encode(RefreshRequest(refreshToken: refreshToken))
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw Error.transport(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw Error.http(-1)
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            // 400/401 from refresh means the refresh token is dead;
+            // there's no recovery here besides re-authenticating with
+            // Apple, which the connecting view will gate on.
+            if http.statusCode == 400 || http.statusCode == 401 {
+                WatchAuthStore.shared.clear()
+                throw Error.unauthorized
+            }
+            throw Error.http(http.statusCode)
+        }
+        do {
+            let tokens = try decoder.decode(AuthResult.self, from: data)
+            WatchAuthStore.shared.set(
+                accessToken: tokens.accessToken,
+                expiresAtEpoch: tokens.accessTokenExpiresAtEpochSeconds.map { TimeInterval($0) },
+                refreshToken: tokens.refreshToken ?? refreshToken
+            )
+        } catch {
+            throw Error.decode(error)
+        }
+    }
+
+    /// Pre-emptive refresh — if the stored access token expires within
+    /// the next 5 minutes, swap it for a fresh one before making the
+    /// outbound call. Keeps long-running poll cycles from sleeping
+    /// across an expiry boundary.
+    private func preemptivelyRefreshIfStale() async {
+        guard let token = WatchAuthStore.shared.current(),
+              let expiresAt = token.accessTokenExpiresAt else { return }
+        let buffer: TimeInterval = 5 * 60
+        guard expiresAt <= Date().addingTimeInterval(buffer) else { return }
+        // Best-effort — failures here are absorbed; the outer fetch
+        // will still attempt with the (probably-soon-expired) token
+        // and retry on 401 via the standard path.
+        try? await refreshAccessToken()
+    }
+
+    private struct RefreshRequest: Encodable {
+        let refreshToken: String
     }
 
     private struct SnapshotEnvelope: Decodable {

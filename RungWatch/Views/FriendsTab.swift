@@ -14,10 +14,11 @@ struct FriendsTab: View {
     var body: some View {
         if entries.isEmpty {
             emptyState
-                .containerBackground(WatchTheme.bg.gradient, for: .tabView)
+                .watchWashBackground(.cyan)
         } else {
             ScrollView {
                 VStack(spacing: 5) {
+                    WatchPageTitle("Friends", accent: WatchTheme.cCyan)
                     if let leader = entries.first {
                         PodiumCard(entry: leader, scale: scale)
                     }
@@ -29,12 +30,14 @@ struct FriendsTab: View {
                 .padding(.top, 4)
                 .padding(.bottom, 10)
             }
-            .containerBackground(WatchTheme.bg.gradient, for: .tabView)
+            .watchWashBackground(.cyan)
         }
     }
 
     private var emptyState: some View {
         VStack(spacing: 6) {
+            WatchPageTitle("Friends", accent: WatchTheme.cCyan)
+                .padding(.horizontal, 12)
             Spacer()
             Image(systemName: "person.2.fill")
                 .font(.system(size: 22 * scale))
@@ -92,16 +95,7 @@ private struct PodiumCard: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
-        .background(
-            LinearGradient(
-                colors: [WatchTheme.gold.opacity(0.18), WatchTheme.gold.opacity(0.04)],
-                startPoint: .top, endPoint: .bottom)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(WatchTheme.gold.opacity(0.4), lineWidth: 0.5)
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .liquidGlassSurface(cornerRadius: 14, tint: WatchTheme.cAmber, strong: true)
     }
 }
 
@@ -154,13 +148,8 @@ private struct LeaderboardRow: View {
     @ViewBuilder
     private var rowBackground: some View {
         if entry.isCurrentUser {
-            LinearGradient(colors: [WatchTheme.accent.opacity(0.18),
-                                    WatchTheme.accent.opacity(0.05)],
-                           startPoint: .top, endPoint: .bottom)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(WatchTheme.accent.opacity(0.4), lineWidth: 0.5)
-                )
+            Color.clear
+                .liquidGlassSurface(cornerRadius: 10, tint: WatchTheme.cCyan)
         } else {
             Color.clear
         }

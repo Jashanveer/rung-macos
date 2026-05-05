@@ -81,7 +81,7 @@ struct WatchWorkoutView: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 6)
-        .containerBackground(WatchTheme.bg.gradient, for: .navigation)
+        .watchWashNavigationBackground(.amber)
         .onReceive(timer) { now in nowTick = now }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {

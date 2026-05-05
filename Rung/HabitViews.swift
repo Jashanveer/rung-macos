@@ -1126,6 +1126,12 @@ struct HabitListSection: View {
     /// Today's calendar events — same shape we feed to HabitTimeSuggestion.
     /// Empty if calendar permission was denied or the user has no events.
     var todaysEvents: [CalendarEvent] = []
+    /// Cross-device-synced per-habit "Try HH:MM" hints. When present,
+    /// the section reads each chip from this payload instead of running
+    /// the local heuristic / LLM, so every device shows the same time.
+    /// Falls back to local computation when nil (signed-out users,
+    /// pre-first-refresh, server endpoint not yet implemented).
+    var syncedPerHabit: [HabitSuggestion]? = nil
 
     /// Drives a re-render whenever the AI advisor lands a fresh
     /// per-habit suggestion. Without this observation, LLM results
@@ -1232,6 +1238,14 @@ struct HabitListSection: View {
             }
         }()
         guard !isDone, !isFrozenToday else { return nil }
+
+        // Synced payload wins when it has an entry for this habit. We
+        // resolve by `backendId` first (durable across renames) and
+        // fall back to title for habits that haven't synced yet.
+        if let synced = syncedSuggestion(for: habit) {
+            return synced
+        }
+
         let shape = HabitTimeSuggestion.TaskShape.classify(
             canonicalKey: habit.canonicalKey,
             title: habit.title
@@ -1257,6 +1271,35 @@ struct HabitListSection: View {
             forecast: forecast
         )
         return advisor.cachedSuggestion(forKey: key) ?? baseline
+    }
+
+    /// Look up the synced "Try HH:MM" hint for `habit`. Returns nil
+    /// when no payload is loaded yet, or when the payload covers a
+    /// different day, or when this habit isn't in the payload.
+    private func syncedSuggestion(for habit: Habit) -> HabitTimeSuggestion.Suggestion? {
+        guard let entries = syncedPerHabit, !entries.isEmpty else { return nil }
+        let match = entries.first { entry in
+            if let id = habit.backendId, let entryId = entry.habitId {
+                return entryId == id
+            }
+            return entry.habitTitle == habit.title
+        }
+        guard let match else { return nil }
+        // Drop stale slots that have already passed — same rule
+        // `HabitAITimeAdvisor.cachedSuggestion` enforces locally.
+        guard match.time > Date() else { return nil }
+        let shape = HabitTimeSuggestion.TaskShape.classify(
+            canonicalKey: habit.canonicalKey,
+            title: habit.title
+        )
+        return HabitTimeSuggestion.Suggestion(
+            time: match.time,
+            isEnergyPeak: match.isEnergyPeak,
+            forecast: forecast,
+            scoreBreakdown: HabitTimeSuggestion.ScoreBreakdown(energy: 1, earliness: 0),
+            shape: shape,
+            aiReason: match.aiReason
+        )
     }
 }
 
@@ -1680,10 +1723,11 @@ private struct PerHabitTimeChip: View {
 
     private var tint: Color {
         switch suggestion.shape {
-        case .peak:     return Color(red: 0.94, green: 0.74, blue: 0.24)   // gold
-        case .dip:      return Color(red: 0.94, green: 0.55, blue: 0.18)   // warm orange
-        case .windDown: return Color.indigo
-        case .flexible: return Color.secondary
+        case .mentalPeak:   return Color(red: 0.94, green: 0.74, blue: 0.24)  // gold — morning cognitive peak
+        case .physicalPeak: return Color(red: 0.18, green: 0.62, blue: 0.42)  // green — afternoon body-temp peak
+        case .dip:          return Color(red: 0.94, green: 0.55, blue: 0.18)  // warm orange
+        case .windDown:     return Color.indigo
+        case .flexible:     return Color.secondary
         }
     }
 
@@ -1712,10 +1756,11 @@ private struct PerHabitTimeChip: View {
 
     private var iconName: String {
         switch suggestion.shape {
-        case .peak:     return "bolt.fill"
-        case .dip:      return "tray.full.fill"
-        case .windDown: return "moon.fill"
-        case .flexible: return "clock.fill"
+        case .mentalPeak:   return "brain.head.profile"
+        case .physicalPeak: return "figure.run"
+        case .dip:          return "tray.full.fill"
+        case .windDown:     return "moon.fill"
+        case .flexible:     return "clock.fill"
         }
     }
 }

@@ -36,6 +36,19 @@ final class WatchBackendStore: ObservableObject {
     private let client = WatchBackendClient()
     private var pollTask: Task<Void, Never>?
 
+    /// Tunable foreground poll interval. 30 s by default — fast enough
+    /// that a habit toggled on iOS feels live within one wrist-raise,
+    /// slow enough that a wrist worn all day doesn't burn through a
+    /// disproportionate amount of battery. The watch's connectivity
+    /// stack doesn't really wake the radio for these — it piggybacks
+    /// on whatever the system was already doing.
+    static let foregroundPollInterval: TimeInterval = 30
+
+    /// Bumped on every successful or attempted fetch so callers can
+    /// rate-limit their own refresh requests (e.g. avoid two rapid
+    /// scenePhase->refresh ticks within a second of each other).
+    private var lastFetchAttemptedAt: Date = .distantPast
+
     private init() {}
 
     /// Kick off the background poll loop. Idempotent — extra calls are
@@ -60,18 +73,43 @@ final class WatchBackendStore: ObservableObject {
     /// - the connecting view's Retry button
     /// - the SSE handler when `watch.snapshot.changed` fires
     /// - the cold-launch entry point in `RungWatchApp`
+    /// - scenePhase transitions (wrist raise / app foreground)
+    /// - watch-side toggles, ~1.2s after the user taps a habit so the
+    ///   server has time to round-trip the change before we re-fetch
     func refreshNow() async {
         await fetchOnce()
     }
 
+    /// Coalesced refresh — guards against multiple "user did a thing"
+    /// events firing the same fetch within a second. Skips the request
+    /// when the last attempt was less than `minimumGap` seconds ago.
+    func refreshIfStale(minimumGap: TimeInterval = 2) async {
+        if Date().timeIntervalSince(lastFetchAttemptedAt) < minimumGap { return }
+        await fetchOnce()
+    }
+
+    /// Schedule a refresh to fire `delay` seconds from now. Used after
+    /// a watch-side toggle so the optimistic UI commits, then the
+    /// server's authoritative snapshot back-fills any state the toggle
+    /// can't compute locally (XP, streak, leaderboard rank).
+    func scheduleRefresh(after delay: TimeInterval) {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self else { return }
+            await self.refreshIfStale()
+        }
+    }
+
     private func runPollLoop() async {
         // Initial fetch as soon as we start so the first paint after a
-        // cold launch shows server-fresh data. After that we poll
-        // every 90 s — enough to feel live for a watch-only travel
-        // session, light enough to not crater battery.
+        // cold launch shows server-fresh data. After that we poll on
+        // the foreground cadence — the watch is foregrounded only when
+        // the user is actively looking at it, so 30 s is the right
+        // balance between "feels live" and battery.
         await fetchOnce()
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 90 * 1_000_000_000)
+            let nanos = UInt64(Self.foregroundPollInterval * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanos)
             if Task.isCancelled { return }
             await fetchOnce()
         }
@@ -84,17 +122,18 @@ final class WatchBackendStore: ObservableObject {
             lastError = WatchBackendClient.Error.noToken.localizedDescription
             return
         }
+        lastFetchAttemptedAt = Date()
         isFetching = true
         defer { isFetching = false }
         do {
             let result = try await client.fetchSnapshot()
             lastError = nil
             lastFetchedAt = result.updatedAt
-            // Merge against the live session — only adopt the backend
-            // snapshot when it's strictly newer than what's already
-            // displayed (cache or WC). This keeps the live optimistic
-            // toggles the user just made from being clobbered by an
-            // older server payload.
+            // Merge against the live session — adopt anything the
+            // backend hands us that's at least as fresh as what we're
+            // showing. The server is authoritative for derived state
+            // (streak, XP, leaderboard) that the watch can't recompute
+            // locally, so a tie on `generatedAt` should still win.
             WatchSession.shared.acceptBackendSnapshot(
                 result.snapshot,
                 updatedAt: result.updatedAt

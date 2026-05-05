@@ -11,6 +11,7 @@ struct StatsTab: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            WatchPageTitle("Stats", accent: WatchTheme.cCyan)
             ringHero
             Spacer(minLength: 0)
             footer
@@ -19,7 +20,7 @@ struct StatsTab: View {
         .padding(.top, 4)
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .containerBackground(WatchTheme.bg.gradient, for: .tabView)
+        .watchWashBackground(.violet)
     }
 
     private var ringHero: some View {
@@ -51,32 +52,26 @@ struct StatsTab: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 14) {
-            chip(value: "\(formattedXP)", label: "XP", tint: WatchTheme.accent)
-            divider
-            chip(value: rankString, label: "RANK", tint: WatchTheme.gold)
-            divider
-            chip(value: "\(metrics.freezesAvailable)", label: "FREEZE", tint: WatchTheme.violet)
+        HStack(spacing: 4) {
+            chip(value: "\(formattedXP)", label: "XP", tint: WatchTheme.cCyan)
+            chip(value: rankString, label: "RANK", tint: WatchTheme.cAmber)
+            chip(value: "\(metrics.freezesAvailable)", label: "FREEZE", tint: WatchTheme.cViolet)
         }
     }
 
     private func chip(value: String, label: String, tint: Color) -> some View {
-        VStack(spacing: 0) {
-            Text(value)
-                .font(WatchTheme.font(.body, scale: scale, weight: .bold))
-                .foregroundStyle(tint)
+        VStack(spacing: 1) {
             Text(label)
                 .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
                 .tracking(1.2)
                 .foregroundStyle(WatchTheme.inkSoft)
+            Text(value)
+                .font(WatchTheme.font(.body, scale: scale, weight: .bold))
+                .foregroundStyle(tint)
         }
         .frame(maxWidth: .infinity)
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.08))
-            .frame(width: 0.5, height: 22)
+        .padding(.vertical, 6)
+        .liquidGlassSurface(cornerRadius: 9, tint: tint)
     }
 
     private var formattedXP: String {

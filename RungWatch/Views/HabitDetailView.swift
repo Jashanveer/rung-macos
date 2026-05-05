@@ -118,7 +118,7 @@ struct HabitDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 11)
         .padding(.bottom, 8)
-        .containerBackground(WatchTheme.bg.gradient, for: .navigation)
+        .watchWashNavigationBackground(.violet)
         .focusable()
         .digitalCrownRotation(
             $crownValue,

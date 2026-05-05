@@ -79,7 +79,7 @@ struct HabitMetrics {
         let totalChecks = habits.reduce(0) { $0 + Set($1.completedDayKeys).count }
         let doneToday = todayEntries.filter { $0.isSatisfied(on: todayKey) }.count
         let progressToday = totalHabits > 0 ? Double(doneToday) / Double(totalHabits) : 0
-        let perfectDays = perfectDayKeys(for: habits)
+        let perfectDays = perfectDayKeys(for: habits, todayKey: todayKey)
         let bestPerfectStreak = bestStreak(for: perfectDays)
         let currentPerfectStreak = perfectDays.contains(todayKey) ? currentStreak(for: perfectDays, endingAt: todayKey) : 0
         let medals = achievementMedals(for: habits, perfectDays: perfectDays, totalChecks: totalChecks, bestPerfectStreak: bestPerfectStreak)
@@ -247,7 +247,7 @@ struct HabitMetrics {
         return best
     }
 
-    static func perfectDayKeys(for habits: [Habit]) -> [String] {
+    static func perfectDayKeys(for habits: [Habit], todayKey: String = DateKey.key(for: Date())) -> [String] {
         guard !habits.isEmpty else { return [] }
 
         // Any day that either carries at least one completion OR is covered
@@ -265,6 +265,11 @@ struct HabitMetrics {
 
         return candidateKeys
             .filter { key in
+                // Future days haven't been lived yet — even when a weekly
+                // habit's rest budget would technically cover them, marking
+                // them perfect ahead of time lights up days the user
+                // hasn't earned. Cap at today (yyyy-MM-dd sorts lexically).
+                guard key <= todayKey else { return false }
                 let activeEntries = habits.filter { isEntryActive($0, on: key) }
                 guard !activeEntries.isEmpty else { return false }
                 return activeEntries.allSatisfy { $0.isSatisfied(on: key) }

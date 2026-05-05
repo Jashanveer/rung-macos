@@ -14,6 +14,10 @@ import SwiftUI
 struct EnergyView: View {
     @ObservedObject var service: SleepInsightsService
     @StateObject private var calendarService = CalendarService.shared
+    /// User's habits + tasks. Drives the per-task pins on the energy
+    /// chart so the curve shows where the user's actual day lands
+    /// against their alertness rather than generic "Focus / Move" stamps.
+    var habits: [Habit] = []
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var refreshing = false
@@ -39,38 +43,88 @@ struct EnergyView: View {
     #endif
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                if let snapshot = service.snapshot, let forecast = service.forecast {
-                    headerSection(snapshot: snapshot, forecast: forecast)
-                    let suggestion = HabitTimeSuggestion.suggest(
-                        events: calendarService.todaysEvents,
-                        forecast: forecast
-                    )
-                    PeakShapeBadge(forecast: forecast)
-                    EnergyCurveChart(forecast: forecast, suggestion: suggestion)
-                        .frame(height: 180)
-                    if let suggestion {
-                        suggestionCallout(suggestion)
+        // Tick every minute so the "now" line, suggestion time, and any
+        // task pin whose time has passed all stay fresh while the user
+        // sits on this tab. Without this, opening the view at 11 AM and
+        // checking back at 1 PM would show stale annotations.
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            ScrollView {
+                VStack(spacing: 18) {
+                    if let snapshot = service.snapshot, let forecast = service.forecast {
+                        headerSection(snapshot: snapshot, forecast: forecast, now: context.date)
+                        let suggestion = HabitTimeSuggestion.suggest(
+                            events: calendarService.todaysEvents,
+                            forecast: forecast,
+                            now: context.date
+                        )
+                        PeakShapeBadge(forecast: forecast)
+                        EnergyCurveChart(
+                            forecast: forecast,
+                            now: context.date,
+                            tasks: taskPins(forecast: forecast, now: context.date)
+                        )
+                            .frame(height: 200)
+                        if let suggestion, suggestion.time > context.date {
+                            suggestionCallout(suggestion)
+                        }
+                        staleDataNoticeIfNeeded()
+                        sleepDebtSection(snapshot: snapshot)
+                        bedtimeSection(snapshot: snapshot)
+                        melatoninWindowSection(forecast: forecast)
+                    } else {
+                        emptyState
                     }
-                    staleDataNoticeIfNeeded()
-                    sleepDebtSection(snapshot: snapshot)
-                    recommendationsSection(forecast: forecast)
-                    bedtimeSection(snapshot: snapshot)
-                    melatoninWindowSection(forecast: forecast)
-                } else {
-                    emptyState
                 }
+                .padding(20)
             }
-            .padding(20)
+            .scrollIndicators(.hidden)
         }
-        .scrollIndicators(.hidden)
         .task {
             // Refresh on appear so the gauge reflects new sleep data the
             // moment the user opens the tab. Cheap — the service is a
             // singleton and HK queries are cached internally.
             await service.refresh()
         }
+    }
+
+    /// Build chart pins for tasks (with `dueAt` today) and habits with a
+    /// reminder window today. Only future times are surfaced — a pin in
+    /// the past is just chart clutter, and the user explicitly asked for
+    /// the suggested time to land after the current time.
+    private func taskPins(forecast: EnergyForecast, now: Date) -> [EnergyTaskPin] {
+        let calendar = Calendar.current
+        let chartStart = forecast.wakeTime
+        let chartEnd = forecast.bedTime
+        let todayKey = calendar.startOfDay(for: now)
+
+        var pins: [EnergyTaskPin] = []
+        for habit in habits where !habit.isArchived {
+            // Tasks: pin at dueAt when the due is today and still ahead.
+            if habit.entryType == .task,
+               let due = habit.dueAt,
+               calendar.isDate(due, inSameDayAs: now),
+               due > now,
+               due >= chartStart, due <= chartEnd {
+                pins.append(EnergyTaskPin(name: habit.title, time: due, color: .pink))
+                continue
+            }
+            // Habits with a reminder window: pin at the window's hour
+            // when it's today and still ahead and not yet completed.
+            if habit.entryType == .habit,
+               let raw = habit.reminderWindow,
+               let window = HabitReminderWindow(rawValue: raw) {
+                guard let pinned = calendar.date(
+                    bySettingHour: window.hour, minute: 0, second: 0, of: todayKey
+                ), pinned > now,
+                  pinned >= chartStart, pinned <= chartEnd else { continue }
+                let dayKey = DateKey.key(for: now)
+                if habit.isSatisfied(on: dayKey) { continue }
+                pins.append(EnergyTaskPin(name: habit.title, time: pinned, color: .indigo))
+            }
+        }
+        // Earliest first so adjacency-based collision logic in the chart
+        // can dodge labels in render order.
+        return pins.sorted { $0.time < $1.time }
     }
 
     // MARK: - Sections
@@ -110,8 +164,7 @@ struct EnergyView: View {
     }
 
     @ViewBuilder
-    private func headerSection(snapshot: SleepSnapshot, forecast: EnergyForecast) -> some View {
-        let now = Date()
+    private func headerSection(snapshot: SleepSnapshot, forecast: EnergyForecast, now: Date) -> some View {
         let energy = forecast.energy(at: now)
         let band = EnergyForecast.label(for: energy)
         VStack(spacing: 12) {
@@ -162,53 +215,6 @@ struct EnergyView: View {
             primary: info.label,
             secondary: "Rolling deficit over the last \(snapshot.sampleCount) nights · 8h target"
         )
-    }
-
-    @ViewBuilder
-    private func recommendationsSection(forecast: EnergyForecast) -> some View {
-        let windows = EnergyCurveChart.windows(for: forecast)
-
-        VStack(spacing: 10) {
-            ForEach(windows) { window in
-                InsightRow(
-                    systemImage: icon(for: window.kind),
-                    tint: window.tint,
-                    primary: "\(headline(for: window.kind)) · \(timeString(window.time))",
-                    secondary: copy(for: window.kind)
-                )
-            }
-        }
-    }
-
-    private func icon(for kind: EnergyWindow.Kind) -> String {
-        switch kind {
-        case .focus:    return "brain.head.profile"
-        case .recover:  return "tray.full.fill"
-        case .move:     return "figure.run"
-        case .windDown: return "moon.stars.fill"
-        }
-    }
-
-    private func headline(for kind: EnergyWindow.Kind) -> String {
-        switch kind {
-        case .focus:    return "Focus window"
-        case .recover:  return "Recover · post-lunch dip"
-        case .move:     return "Movement window"
-        case .windDown: return "Wind-down"
-        }
-    }
-
-    private func copy(for kind: EnergyWindow.Kind) -> String {
-        switch kind {
-        case .focus:
-            return "Office work, deep focus, learning. Cortisol is at its highest, your prefrontal cortex is sharp — protect this time for analytical work."
-        case .recover:
-            return "Laundry, dishes, cooking, errands. Your alertness dips after lunch — pair low-cognition chores so your peaks aren't burnt on housework. Run a wash while you cook."
-        case .move:
-            return "Gym, runs, walks, social calls. Body temperature is at its highest of the day for peak physical performance, while cognitive demand naturally relaxes — pair the two."
-        case .windDown:
-            return "Reading, journaling, planning tomorrow. Skip intense work and bright screens so melatonin can rise on schedule."
-        }
     }
 
     @ViewBuilder
@@ -283,9 +289,13 @@ struct EnergyView: View {
                 .padding(.horizontal, 12)
 
             #if os(iOS)
-            // Only iOS can read HealthKit on a native app. macOS users
-            // get a stay-where-you-are message above instead of a button
-            // that wouldn't actually do anything.
+            // iPad gets the same stay-where-you-are message as macOS —
+            // Apple Watch pairs to iPhone, so iPad's HealthKit store is
+            // almost always empty. Skip the connect button there.
+            if UIDevice.current.userInterfaceIdiom != .pad {
+            // Only iPhone can read HealthKit on a native app. macOS / iPad
+            // users get a stay-where-you-are message above instead of a
+            // button that wouldn't actually do anything.
             Button(action: handleHealthKitTap) {
                 HStack(spacing: 6) {
                     if isRequestingHealthKit {
@@ -332,6 +342,7 @@ struct EnergyView: View {
                 } else {
                     Text("Rung needs at least 3 nights of sleep tracking to model your energy curve. Wear your Apple Watch overnight or log sleep in the Health app, then check back.")
                 }
+            }
             }
             #endif
         }
@@ -411,6 +422,7 @@ struct EnergyView: View {
         #if os(macOS)
         return "iphone.gen3"
         #else
+        if UIDevice.current.userInterfaceIdiom == .pad { return "iphone.gen3" }
         return "moon.zzz"
         #endif
     }
@@ -419,6 +431,7 @@ struct EnergyView: View {
         #if os(macOS)
         return "Track sleep on your iPhone"
         #else
+        if UIDevice.current.userInterfaceIdiom == .pad { return "Track sleep on your iPhone" }
         return "Not enough sleep data yet"
         #endif
     }
@@ -427,6 +440,9 @@ struct EnergyView: View {
         #if os(macOS)
         return "Apple Health is only available on iPhone. Open Rung on your phone, grant Health access, and your energy curve will sync here automatically once you've logged a few nights of sleep."
         #else
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            return "Apple Health pairs with iPhone, not iPad. Open Rung on your phone, grant Health access, and your energy curve will sync here automatically once you've logged a few nights of sleep."
+        }
         return "Rung needs three nights of sleep tracking from Apple Health to model your energy curve. Wear your Apple Watch overnight, or log sleep in the Health app, then check back here."
         #endif
     }
@@ -543,55 +559,88 @@ private struct PeakShapeBadge: View {
         let tint: Color = bimodal
             ? Color(red: 0.18, green: 0.58, blue: 0.86)
             : Color(red: 0.46, green: 0.48, blue: 0.84)
-        HStack(spacing: 8) {
+        // Stack title + detail vertically so the detail can wrap to a
+        // second line on iPhone instead of getting tail-truncated, and
+        // raise the foreground style to `.primary` (not `.secondary`)
+        // so the message reads cleanly on dark iPad — `.secondary`
+        // there resolves to a near-transparent gray that vanishes
+        // against the deep navy background.
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(tint)
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-            Text("·")
-                .foregroundStyle(.tertiary)
-                .font(.system(size: 12, weight: .semibold))
-            Text(detail)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(detailColor(tint: tint))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Capsule clipped a multi-line label off — move to a rounded
+        // rectangle that grows with the wrapping text.
         .background(
-            Capsule(style: .continuous)
-                .fill(tint.opacity(colorScheme == .dark ? 0.16 : 0.10))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(tint.opacity(colorScheme == .dark ? 0.20 : 0.10))
         )
         .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(tint.opacity(0.22), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(tint.opacity(colorScheme == .dark ? 0.40 : 0.22), lineWidth: 0.5)
         )
+    }
+
+    /// Detail-line foreground that stays legible in both modes. `.primary`
+    /// at 0.85 opacity in dark mode reads cleanly against the tinted
+    /// fill; `.secondary` was washing out on iPadOS dark.
+    private func detailColor(tint: Color) -> Color {
+        colorScheme == .dark
+            ? Color.primary.opacity(0.85)
+            : Color.primary.opacity(0.62)
     }
 }
 
 // MARK: - Curve
 
+/// One pin on the energy chart for a user task or habit. Drawn as a
+/// vertical line + the task's title above the curve so the user sees
+/// where their actual day lands against their alertness rather than
+/// generic "Focus / Move" stamps.
+struct EnergyTaskPin: Identifiable {
+    let id = UUID()
+    let name: String
+    let time: Date
+    let color: Color
+}
+
 /// Today's energy curve, plotted from the user's typical wake time to
-/// their typical bedtime. Three chronobiology windows are annotated:
-/// - **Focus** (~3h after wake) — morning cortisol-driven alertness
-///   peak. Best for analytical / office work and learning.
-/// - **Move** (~7h after wake) — post-prandial / mid-day dip in cognitive
-///   demand, but body temperature is climbing. Best for gym, walks,
-///   errands, social calls — anything physical or low cog-load.
-/// - **Wind-down** (90 min before bed) — circadian alertness has
-///   dropped, sleep pressure is high. Best for reading, journaling,
-///   planning tomorrow. Avoid intense work and bright screens.
+/// their typical bedtime. Three biological anchors are annotated so the
+/// curve stays readable:
 ///
-/// Sources: Borbély two-process model + Rise Science / Foster
-/// chronobiology framework. The window times are heuristics derived
-/// from the user's own median wake/bed pair so they shift with the
-/// actual schedule instead of using a clock-time default.
+/// - **Wake** — left axis label, anchors the morning end of the curve.
+/// - **Peak** — circadian acrophase derived from chronotype + wake.
+/// - **Melatonin (DLMO)** — predicted dim-light melatonin onset, the
+///   biological start of the wind-down window.
+///
+/// Plus the user's own tasks and habits at their scheduled times — pins
+/// only render when their time is still ahead of `now`, so the chart
+/// reflects "what's still on the board today" instead of dragging
+/// already-past clutter forward.
 private struct EnergyCurveChart: View {
     let forecast: EnergyForecast
-    var suggestion: HabitTimeSuggestion.Suggestion? = nil
+    /// Frozen "now" for this render pass — passed in by the parent's
+    /// TimelineView so the now line, future-only filtering, and pin
+    /// labels all agree on a single timestamp.
+    let now: Date
+    var tasks: [EnergyTaskPin] = []
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -604,8 +653,6 @@ private struct EnergyCurveChart: View {
                 : chartStart...chartStart.addingTimeInterval(16 * 3600)
             let samples = forecast.curve(from: safeRange.lowerBound, until: safeRange.upperBound, step: 15 * 60)
             let bandSamples = forecast.curveWithBand(from: safeRange.lowerBound, until: safeRange.upperBound, step: 15 * 60)
-            let now = Date()
-            let windows = EnergyCurveChart.windows(for: forecast)
 
             ZStack {
                 // Grid lines at 25/50/75
@@ -622,9 +669,7 @@ private struct EnergyCurveChart: View {
                 }
 
                 // Confidence band (mean ± σ). Shaded behind everything else
-                // so the curve and annotations sit on top. Wider band when
-                // chronotype is unlearned, sample count is low, or sleep
-                // debt is high — the model's honest "we're guessing" area.
+                // so the curve and annotations sit on top.
                 Path { path in
                     guard let first = bandSamples.first else { return }
                     let upperFirst = pointFor(
@@ -690,33 +735,6 @@ private struct EnergyCurveChart: View {
                     style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
                 )
 
-                // Annotated windows — Focus, Move, Wind-down. Each one
-                // sits on the curve at the energy level for that time so
-                // the badge feels glued to the line rather than floating.
-                // Wind-down nudges down when it's at the same x as the
-                // DLMO marker so the two labels don't pile on top of
-                // each other in the top-right corner.
-                let dlmoX = pointFor(
-                    sample: (forecast.predictedDLMO, 0),
-                    in: geo.size,
-                    range: safeRange
-                ).x
-                ForEach(windows.filter { safeRange.contains($0.time) }) { window in
-                    let energy = forecast.energy(at: window.time)
-                    let point = pointFor(
-                        sample: (window.time, energy),
-                        in: geo.size,
-                        range: safeRange
-                    )
-                    let collidesWithDLMO = window.kind == .windDown
-                        && abs(point.x - dlmoX) < 36
-                    annotation(
-                        window: window,
-                        at: point,
-                        nudgeDown: collidesWithDLMO
-                    )
-                }
-
                 // Now marker — vertical line + filled dot at curve height.
                 if now >= safeRange.lowerBound && now <= safeRange.upperBound {
                     let nowEnergy = forecast.energy(at: now)
@@ -737,135 +755,75 @@ private struct EnergyCurveChart: View {
                         .position(nowPoint)
                 }
 
-                // Predicted DLMO marker — soft purple vertical line +
-                // tiny "DLMO" tag at the top. This is when the model
-                // expects the user's biological wind-down to begin;
-                // surfacing it makes the wind-down recommendation
-                // anchor to a real cue instead of a generic "evening".
-                let dlmo = forecast.predictedDLMO
-                if dlmo >= safeRange.lowerBound && dlmo <= safeRange.upperBound {
-                    let dlmoX = pointFor(
-                        sample: (dlmo, 0),
-                        in: geo.size,
-                        range: safeRange
-                    ).x
-                    let dlmoTint = Color(red: 0.46, green: 0.36, blue: 0.86)
+                // Biological anchors: wake (already at the left axis),
+                // peak, and DLMO. Render in tag-row order so labels can
+                // dodge each other along the top strip.
+                let anchorTags: [AnchorTag] = anchorPositions(in: geo.size, range: safeRange)
+                ForEach(anchorTags) { anchor in
                     Path { path in
-                        path.move(to: CGPoint(x: dlmoX, y: 12))
-                        path.addLine(to: CGPoint(x: dlmoX, y: geo.size.height))
+                        path.move(to: CGPoint(x: anchor.x, y: 16))
+                        path.addLine(to: CGPoint(x: anchor.x, y: geo.size.height))
                     }
                     .stroke(
-                        dlmoTint.opacity(0.42),
+                        anchor.color.opacity(0.42),
                         style: StrokeStyle(lineWidth: 0.8, dash: [4, 4])
                     )
-                    Text("DLMO")
+                    Text(anchor.label)
                         .font(.system(size: 8, weight: .bold))
                         .tracking(0.4)
-                        .foregroundStyle(dlmoTint)
+                        .foregroundStyle(anchor.color)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                         .background(
                             Capsule(style: .continuous)
-                                .fill(dlmoTint.opacity(colorScheme == .dark ? 0.22 : 0.16))
+                                .fill(anchor.color.opacity(colorScheme == .dark ? 0.22 : 0.16))
                         )
-                        .position(x: dlmoX, y: 8)
+                        .position(x: anchor.x, y: 8)
                 }
 
-                // Calendar-aware "best slot" marker. Sits above the
-                // curve at the suggested time so the user can see why
-                // we chose that hour — it's at (or near) their peak.
-                // Gold = brand colour, distinguishes from indigo "now".
-                //
-                // Suppressed when the suggested time is within ~30 min
-                // of one of the four window pins (Focus / Recover /
-                // Move / Wind-down). The window label already conveys
-                // "this is your peak / dip / etc." for that time, so
-                // stacking a second pill on the same x makes both
-                // unreadable. The bottom-of-chart suggestion callout
-                // still names the time in plain English either way.
-                if let suggestion, safeRange.contains(suggestion.time) {
-                    let energy = forecast.energy(at: suggestion.time)
-                    let point = pointFor(
-                        sample: (suggestion.time, energy),
-                        in: geo.size,
-                        range: safeRange
+                // User task pins. Each shows the task title at the top
+                // of the chart and a dot on the curve at that time. Only
+                // future-time pins are passed in by the parent — past
+                // tasks would just be chart clutter.
+                let taskLayouts = layoutTaskPins(geo: geo, range: safeRange, anchors: anchorTags)
+                ForEach(taskLayouts) { layout in
+                    let pin = layout.pin
+                    Path { path in
+                        path.move(to: CGPoint(x: layout.x, y: layout.labelY + 8))
+                        path.addLine(to: CGPoint(x: layout.x, y: geo.size.height))
+                    }
+                    .stroke(
+                        pin.color.opacity(0.32),
+                        style: StrokeStyle(lineWidth: 0.8, dash: [3, 3])
                     )
-                    let collidesWithWindow = windows.contains { window in
-                        abs(window.time.timeIntervalSince(suggestion.time)) < 30 * 60
-                    }
-                    if !collidesWithWindow {
-                        suggestionAnnotation(at: point)
-                    }
+                    Circle()
+                        .fill(pin.color)
+                        .frame(width: 7, height: 7)
+                        .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
+                        .position(x: layout.x, y: layout.curveY)
+                    Text(pin.name)
+                        .font(.system(size: 9, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(pin.color)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(pin.color.opacity(colorScheme == .dark ? 0.22 : 0.14))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(pin.color.opacity(0.32), lineWidth: 0.5)
+                        )
+                        .frame(maxWidth: layout.maxLabelWidth)
+                        .position(x: layout.x, y: layout.labelY)
                 }
 
-                // X-axis labels: wake / mid / peak / bed instead of a
-                // generic clock-time set, so the chart anchors to the
-                // user's actual day.
+                // X-axis labels: wake / mid / bed.
                 axisLabels(geo: geo, range: safeRange)
             }
         }
-    }
-
-    private func annotation(
-        window: EnergyWindow,
-        at point: CGPoint,
-        nudgeDown: Bool = false
-    ) -> some View {
-        VStack(spacing: 3) {
-            Text(window.label)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(window.tint)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(window.tint.opacity(colorScheme == .dark ? 0.20 : 0.14))
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(window.tint.opacity(0.32), lineWidth: 0.5)
-                )
-            Circle()
-                .fill(window.tint)
-                .frame(width: 7, height: 7)
-                .overlay(Circle().strokeBorder(Color.white, lineWidth: 1))
-        }
-        // When the wind-down annotation lands at the same x as the DLMO
-        // marker (a common case — wind-down sits 90 min before bed,
-        // DLMO sits ~30 min after that), drop the pill below the curve
-        // instead of stacking on the DLMO label at the top of the chart.
-        .position(
-            x: point.x,
-            y: nudgeDown ? min(point.y + 22, point.y + 22) : max(point.y - 14, 14)
-        )
-    }
-
-    private func suggestionAnnotation(at point: CGPoint) -> some View {
-        let gold = Color(red: 0.94, green: 0.74, blue: 0.24)
-        return VStack(spacing: 3) {
-            HStack(spacing: 3) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 8, weight: .bold))
-                Text("Best slot")
-                    .font(.system(size: 9, weight: .bold))
-            }
-            .foregroundStyle(gold)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(gold.opacity(colorScheme == .dark ? 0.22 : 0.16))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(gold.opacity(0.45), lineWidth: 0.5)
-            )
-            Circle()
-                .fill(gold)
-                .frame(width: 8, height: 8)
-                .overlay(Circle().strokeBorder(Color.white, lineWidth: 1.2))
-        }
-        .position(x: point.x, y: max(point.y - 16, 16))
     }
 
     private func pointFor(
@@ -881,6 +839,79 @@ private struct EnergyCurveChart: View {
             x: size.width * xRatio,
             y: size.height * (1 - yRatio)
         )
+    }
+
+    private func anchorPositions(
+        in size: CGSize,
+        range: ClosedRange<Date>
+    ) -> [AnchorTag] {
+        var anchors: [AnchorTag] = []
+        if range.contains(forecast.circadianPeak) {
+            let x = pointFor(sample: (forecast.circadianPeak, 0), in: size, range: range).x
+            anchors.append(AnchorTag(
+                label: "Peak",
+                x: x,
+                color: Color(red: 0.20, green: 0.62, blue: 0.42)
+            ))
+        }
+        if range.contains(forecast.predictedDLMO) {
+            let x = pointFor(sample: (forecast.predictedDLMO, 0), in: size, range: range).x
+            anchors.append(AnchorTag(
+                label: "Melatonin",
+                x: x,
+                color: Color(red: 0.46, green: 0.36, blue: 0.86)
+            ))
+        }
+        return anchors.sorted { $0.x < $1.x }
+    }
+
+    private func layoutTaskPins(
+        geo: GeometryProxy,
+        range: ClosedRange<Date>,
+        anchors: [AnchorTag]
+    ) -> [TaskLayout] {
+        let topPadding: CGFloat = 22
+        let labelHeight: CGFloat = 16
+        let minSpacing: CGFloat = 4
+
+        struct PlacedRow {
+            var rightEdge: CGFloat
+            var rowIndex: Int
+        }
+        var placedRows: [PlacedRow] = []
+
+        return tasks.compactMap { pin -> TaskLayout? in
+            guard range.contains(pin.time) else { return nil }
+            let curvePoint = pointFor(
+                sample: (pin.time, forecast.energy(at: pin.time)),
+                in: geo.size, range: range
+            )
+            let approxLabelWidth = min(96, max(52, CGFloat(pin.name.count) * 5.5 + 14))
+            let halfLabel = approxLabelWidth / 2
+            let leftEdge = curvePoint.x - halfLabel
+            let rightEdge = curvePoint.x + halfLabel
+
+            // Avoid stomping the anchor labels by row-stacking when too close.
+            let collidesWithAnchor = anchors.contains { abs($0.x - curvePoint.x) < halfLabel + 24 }
+            var chosenRow = 0
+            if collidesWithAnchor {
+                chosenRow = 1
+            }
+            // Search for an open row that doesn't overlap any prior label.
+            while placedRows.contains(where: { $0.rowIndex == chosenRow && leftEdge < $0.rightEdge + minSpacing }) {
+                chosenRow += 1
+            }
+            placedRows.append(PlacedRow(rightEdge: rightEdge, rowIndex: chosenRow))
+
+            let labelY = topPadding + CGFloat(chosenRow) * (labelHeight + 2)
+            return TaskLayout(
+                pin: pin,
+                x: curvePoint.x,
+                curveY: curvePoint.y,
+                labelY: labelY,
+                maxLabelWidth: approxLabelWidth
+            )
+        }
     }
 
     @ViewBuilder
@@ -905,71 +936,22 @@ private struct EnergyCurveChart: View {
                 .position(x: geo.size.width * ratio, y: geo.size.height + 10)
         }
     }
-
-    /// Four time-of-day windows derived from the bimodal energy curve.
-    /// The 12-hour harmonic in `EnergyForecast.circadianAlertness` carves
-    /// real local extrema into the curve, so we can find each window
-    /// numerically instead of guessing — but we fall back to fractional
-    /// offsets if the search misses (e.g., a very short waking day).
-    ///
-    /// - **Focus** (~3 h after wake) — first morning peak, post-cortisol-
-    ///   awakening alertness. Best for analytical / office work, learning,
-    ///   anything that needs cognition.
-    /// - **Recover** (~7 h after wake) — post-prandial / siesta dip. Best
-    ///   for chores, errands, low-cognition admin — laundry, dishes,
-    ///   cooking, walking the dog. Don't waste a peak on these.
-    /// - **Move** (~10 h after wake) — afternoon acrophase. Body
-    ///   temperature is highest, peak performance for HIIT, lifting,
-    ///   running. Also a strong second-cognition window for work that
-    ///   missed the morning slot.
-    /// - **Wind-down** (~90 min before bed) — circadian alertness has
-    ///   dropped, sleep pressure is high. Best for reading, journaling,
-    ///   planning tomorrow. Avoid intense work and bright screens.
-    static func windows(for forecast: EnergyForecast) -> [EnergyWindow] {
-        let wake = forecast.wakeTime
-        let bed = forecast.bedTime
-        let dayLength = bed.timeIntervalSince(wake)
-
-        // Numerical extrema — first morning peak, lunch dip, afternoon
-        // peak. nextPeak / nextDip walk the curve in 5-min steps so they
-        // surface real features when the bimodal harmonic produces them.
-        let morningPeak = forecast.nextPeak(after: wake, until: forecast.circadianPeak)
-            ?? wake.addingTimeInterval(dayLength * 0.20)
-        let lunchDip = forecast.nextDip(after: morningPeak, until: forecast.circadianPeak)
-            ?? wake.addingTimeInterval(dayLength * 0.45)
-        // Afternoon peak: search just past the lunch dip to bed.
-        let afternoonPeak = forecast.nextPeak(after: lunchDip, until: bed)
-            ?? wake.addingTimeInterval(dayLength * 0.65)
-        let windDownTime = bed.addingTimeInterval(-90 * 60)
-
-        return [
-            EnergyWindow(kind: .focus, label: "Focus", time: morningPeak,
-                         tint: Color(red: 0.94, green: 0.74, blue: 0.24)),  // gold
-            EnergyWindow(kind: .recover, label: "Recover", time: lunchDip,
-                         tint: Color(red: 0.94, green: 0.55, blue: 0.18)),  // warm orange
-            EnergyWindow(kind: .move, label: "Move", time: afternoonPeak,
-                         tint: .green),
-            EnergyWindow(kind: .windDown, label: "Wind-down", time: windDownTime,
-                         tint: .indigo),
-        ]
-    }
 }
 
-/// Single annotated window on the energy curve. `label` is what the
-/// user reads on the badge; the matching `recommendationsSection`
-/// reuses `kind` to look up the long-form copy.
-///
-/// The four-window vocabulary mirrors `HabitTimeSuggestion.TaskShape` so
-/// the per-habit chips and the chart annotations agree on what each
-/// time-of-day band means: focus = morning peak, recover = afternoon
-/// dip, move = afternoon peak, wind-down = pre-bed.
-struct EnergyWindow: Identifiable {
-    enum Kind { case focus, recover, move, windDown }
+private struct AnchorTag: Identifiable {
     let id = UUID()
-    let kind: Kind
     let label: String
-    let time: Date
-    let tint: Color
+    let x: CGFloat
+    let color: Color
+}
+
+private struct TaskLayout: Identifiable {
+    let id = UUID()
+    let pin: EnergyTaskPin
+    let x: CGFloat
+    let curveY: CGFloat
+    let labelY: CGFloat
+    let maxLabelWidth: CGFloat
 }
 
 // MARK: - Chronotype badge

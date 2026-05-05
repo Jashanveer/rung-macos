@@ -376,6 +376,21 @@ final class HabitBackendStore: ObservableObject {
     @Published var streamRequestState:      RequestState<Void>                    = .idle
     @Published var preferencesRequestState: RequestState<UserPreferences>         = .idle
     @Published var preferences:             UserPreferences?                       = nil
+    /// Cross-device-synced source of truth for today's coaching headline,
+    /// meeting summary, and per-habit "Try HH:MM" hints. Nil before the
+    /// first refresh of the day; once set, the UI binds against this so
+    /// every device renders the same payload regardless of which one's
+    /// EventKit visibility is the richest. See `HabitBackend+Suggestions`.
+    @Published var dailySuggestion:         DailySuggestionPayload?                = nil
+    /// In-flight guard so concurrent CenterPanel renders don't fire two
+    /// suggestion refreshes at once. Reset to nil when the task ends.
+    var dailySuggestionRefreshTask: Task<Void, Never>?
+    /// Persisted outbox of mentor messages the user wrote while the
+    /// device was offline. Drained by `flushMentorMessageOutbox` on the
+    /// next `NetworkMonitor.isOnline` flip. Published so chat bubbles
+    /// can render a "queued · will send when online" pill on each
+    /// pending entry — see `HabitBackend+MessageOutbox`.
+    @Published var outboundMentorMessages: [Int64: [OutboundMentorMessage]] = [:]
     @Published var liveMessagesByMatch:     [Int64: [AccountabilityDashboard.Message]] = [:]
     /// True while we're waiting on the AI mentor to deliver a reply to the
     /// mentee's latest message. Drives the "mentor is typing…" bubble in
@@ -404,6 +419,7 @@ final class HabitBackendStore: ObservableObject {
     let accountabilityRepository: AccountabilityRepository
     let deviceRepository: DeviceRepository
     let preferencesRepository: PreferencesRepository
+    let dailySuggestionRepository: DailySuggestionRepository
     let sleepSnapshotRepository: SleepSnapshotRepository
     let watchSnapshotRepository: WatchSnapshotRepository
     let circleRepository: CircleRepository
@@ -515,6 +531,7 @@ final class HabitBackendStore: ObservableObject {
         accountabilityRepository  = AccountabilityRepository(client: client)
         deviceRepository          = DeviceRepository(client: client)
         preferencesRepository     = PreferencesRepository(client: client)
+        dailySuggestionRepository = DailySuggestionRepository(client: client)
         sleepSnapshotRepository   = SleepSnapshotRepository(client: client)
         watchSnapshotRepository   = WatchSnapshotRepository(client: client)
         circleRepository          = CircleRepository(client: client)
@@ -546,6 +563,11 @@ final class HabitBackendStore: ObservableObject {
             Task { [weak self] in await self?.reconcileProfileSetupFromServer() }
         }
 
+        // Hydrate the persisted mentor-message outbox so any messages
+        // queued before the previous launch terminated land back in
+        // the published map immediately. Drains on the next online flip.
+        loadOutboundMentorMessagesFromDisk()
+
         isOnline = networkMonitor.isOnline
         networkCancellable = networkMonitor.$isOnline
             .receive(on: DispatchQueue.main)
@@ -559,6 +581,12 @@ final class HabitBackendStore: ObservableObject {
                     // (ContentView) drives the outbox flush via syncWithBackend.
                     if self.errorMessage == Self.offlineStatusMessage {
                         self.errorMessage = nil
+                    }
+                    // Drain any queued mentor messages now that we're
+                    // back online. Errors are kept silent — pending
+                    // entries stay in the outbox for the next flip.
+                    Task { [weak self] in
+                        await self?.flushMentorMessageOutbox()
                     }
                 }
             }

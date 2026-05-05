@@ -32,6 +32,14 @@ struct CenterPanel: View {
     @State private var aiGreeting: String?
     @State private var hasRequestedGreeting = false
 
+    /// Cross-device payload, if the backend has hydrated one. When
+    /// present, `aiGreeting` / `MeetingsPill` / `HabitListSection`
+    /// read from this instead of recomputing per-device — that's the
+    /// fix for "Mac and iPhone show different times" divergence.
+    private var syncedSuggestion: DailySuggestionPayload? {
+        backendStore?.dailySuggestion
+    }
+
     private var pendingHabits: [Habit] {
         if isFrozenToday { return habits }
         let today = DateKey.date(from: todayKey)
@@ -78,10 +86,10 @@ struct CenterPanel: View {
             // permission have an empty `todaysEvents` list anyway, so
             // dropping the guard simplifies the condition without
             // surfacing the pill spuriously.
-            if todaysMeetingCount > 0 {
+            if pillMeetingCount > 0 {
                 MeetingsPill(
-                    count: todaysMeetingCount,
-                    totalMinutes: calendarService.meetingMinutesToday
+                    count: pillMeetingCount,
+                    totalMinutes: pillMeetingMinutes
                 )
                 .transition(.opacity.combined(with: .offset(y: -4)))
             }
@@ -124,7 +132,10 @@ struct CenterPanel: View {
                         stampNamespace: enableStampMatchedGeometry ? stampNamespace : nil,
                         isFrozenToday: isFrozenToday,
                         forecast: sleepService.forecast,
-                        todaysEvents: calendarService.todaysEvents
+                        todaysEvents: calendarService.todaysEvents,
+                        syncedPerHabit: syncedSuggestion?.dayKey == todayKey
+                            ? syncedSuggestion?.perHabit
+                            : nil
                     )
                     .padding(.top, 4)
                     .padding(.bottom, 60)
@@ -145,6 +156,16 @@ struct CenterPanel: View {
             guard !hasRequestedGreeting else { return }
             hasRequestedGreeting = true
             requestAIGreeting()
+            triggerDailySuggestionRefresh()
+        }
+        .onChange(of: calendarService.todaysEvents.map(\.id)) { _, _ in
+            // Calendar updated (permission granted, new event added,
+            // EKEventStoreChanged) — kick the cross-device payload so
+            // the new meeting count propagates to peer devices.
+            triggerDailySuggestionRefresh()
+        }
+        .onChange(of: habits.count) { _, _ in
+            triggerDailySuggestionRefresh()
         }
         .task {
             #if DEBUG
@@ -157,7 +178,14 @@ struct CenterPanel: View {
     }
 
     private var displayGreeting: String {
-        aiGreeting ?? SmartGreeting.generate(
+        // Synced backend payload wins — every device renders the same
+        // headline once the cross-device coordinator has hydrated it.
+        // Falls back to the per-device LLM result while we wait for the
+        // first refresh, and to `SmartGreeting` when no LLM is available.
+        if let headline = syncedSuggestion?.aiHeadline, !headline.isEmpty {
+            return headline
+        }
+        return aiGreeting ?? SmartGreeting.generate(
             habits: habits,
             todayKey: todayKey,
             doneToday: metrics.doneToday,
@@ -166,8 +194,35 @@ struct CenterPanel: View {
         )
     }
 
-    private var todaysMeetingCount: Int {
-        calendarService.todaysEvents.filter { !$0.isAllDay }.count
+    /// Meeting-count source for the pill. Prefer the cross-device
+    /// payload when present so the chip reads the same on every device.
+    /// Local EventKit count remains the immediate-render fallback for
+    /// signed-out users and the few seconds before the first refresh.
+    private var pillMeetingCount: Int {
+        if let synced = syncedSuggestion, synced.dayKey == todayKey {
+            return synced.meetingCount
+        }
+        return calendarService.todaysEvents.filter { !$0.isAllDay }.count
+    }
+
+    private var pillMeetingMinutes: Int {
+        if let synced = syncedSuggestion, synced.dayKey == todayKey {
+            return synced.meetingMinutes
+        }
+        return calendarService.meetingMinutesToday
+    }
+
+    /// Ask the backend store to reconcile our local payload against the
+    /// server. No-op when there's no backend wired (previews, tests).
+    private func triggerDailySuggestionRefresh() {
+        guard let store = backendStore else { return }
+        store.refreshDailySuggestion(
+            habits: habits,
+            todayKey: todayKey,
+            events: calendarService.todaysEvents,
+            forecast: sleepService.forecast,
+            calendarsVisible: calendarService.visibleCalendarCount
+        )
     }
 
     private func requestAIGreeting() {
@@ -222,7 +277,7 @@ struct CenterPanel: View {
             }
             return "\(metrics.currentPerfectStreak)-day perfect streak at risk"
         }()
-        let meetings = todaysMeetingCount
+        let meetings = pillMeetingCount
         let meetingsLine = meetings > 0
             ? "\(meetings) meeting\(meetings == 1 ? "" : "s") today"
             : "calendar is open today"

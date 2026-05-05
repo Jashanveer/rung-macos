@@ -58,6 +58,14 @@ struct MentorCharacterView: View {
         backend.messages(matchID: backend.dashboard?.match?.id)
     }
 
+    /// Pending messages from the offline outbox for the active match.
+    /// Surfaced through MentorChatBubble's `queuedMessages` so the
+    /// user sees a "queued" pill on anything still waiting to send.
+    private var queuedMessagesForActiveMatch: [OutboundMentorMessage] {
+        guard let id = backend.dashboard?.match?.id else { return [] }
+        return backend.outboundMentorMessages[id] ?? []
+    }
+
     private let baseBubbleHeight: CGFloat = 300
     private let baseBubbleWidth: CGFloat = 280
     private let bubbleGap: CGFloat = 8
@@ -173,6 +181,7 @@ struct MentorCharacterView: View {
                     messageText: $messageText,
                     inlineError: inlineChatError,
                     currentUserId: backend.currentUserId,
+                    queuedMessages: queuedMessagesForActiveMatch,
                     onSend: sendMessage,
                     onClose: {
                         closeChat()

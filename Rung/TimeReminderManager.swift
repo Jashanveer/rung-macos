@@ -183,9 +183,22 @@ final class TimeReminderManager: ObservableObject {
         let band: Date?
         let bandLabel: String
         switch shape {
-        case .peak:
+        case .mentalPeak:
             band = forecast.nextPeak(after: now, until: endOfDay)
-            bandLabel = "your next energy peak"
+            bandLabel = "your morning focus peak"
+        case .physicalPeak:
+            // For physical exertion we want the afternoon body-temp peak
+            // — but `nextPeak` may surface the morning cognitive peak
+            // first if it's still ahead. Look past the morning by
+            // searching after `circadianPeak - 2h` so we land on the
+            // actual physical-performance window.
+            let physicalSearchStart = max(
+                now,
+                forecast.circadianPeak.addingTimeInterval(-2 * 3600)
+            )
+            band = forecast.nextPeak(after: physicalSearchStart, until: endOfDay)
+                ?? forecast.nextPeak(after: now, until: endOfDay)
+            bandLabel = "your afternoon body-temp peak"
         case .dip:
             band = forecast.nextDip(after: now, until: endOfDay)
             bandLabel = "the post-lunch dip"

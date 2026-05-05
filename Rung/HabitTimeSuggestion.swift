@@ -138,15 +138,28 @@ enum HabitTimeSuggestion {
         }()
 
         switch shape {
-        case .peak:
-            // Peak tasks land in the morning peak (9–12) or the late-
-            // afternoon acrophase (15–18). Anything outside both windows
-            // is heavily penalized so a forecast-driven score doesn't
-            // pick a 6 PM slot when actual peak is 5 PM but the user
-            // is also free at 5 PM.
-            let inWindow = (9...12).contains(Int(hour)) || (15...18).contains(Int(hour))
-            let windowFactor: Double = inWindow ? 1.0 : 0.4
-            return energyValue * windowFactor
+        case .mentalPeak:
+            // Cognitive tasks (deep work, learning, writing, code) land
+            // in the morning cortisol-driven alertness peak. Body-temp
+            // is climbing, but prefrontal-cortex performance peaks first.
+            // 8–12 with a slight 9–11 sweet-spot bonus.
+            let inWindow = (8...12).contains(Int(hour))
+            let windowFactor: Double = inWindow ? 1.0 : 0.35
+            let sweetSpot: Double = (9...11).contains(Int(hour)) ? 1.05 : 1.0
+            return energyValue * windowFactor * sweetSpot
+        case .physicalPeak:
+            // Exercise / sport / running / lifting belong in the late-
+            // afternoon body-temperature acrophase. Lung function, joint
+            // flexibility, reaction time, and grip strength all peak
+            // 15–18. Outside that window the score collapses so a
+            // forecast-driven match doesn't push a 7 AM slot for "run".
+            let inWindow = (15...18).contains(Int(hour))
+            let windowFactor: Double = inWindow ? 1.0 : 0.35
+            // Earlier morning (6–8) is a viable second-best for users
+            // whose afternoons are blocked — score it modestly so the
+            // calendar-gap solver can still surface it as a fallback.
+            let earlyMorning: Double = (6...8).contains(Int(hour)) ? 0.6 : 0
+            return max(energyValue * windowFactor, earlyMorning)
         case .dip:
             // Dip tasks (chores, admin) belong in the post-lunch dip —
             // 12–16 is the canonical window. Outside that range, score
@@ -241,14 +254,22 @@ enum HabitTimeSuggestion {
                 return "\(prefix) — \(aiReason)"
             }
             switch shape {
-            case .peak:
+            case .mentalPeak:
                 if isEnergyPeak, forecast?.chronotypeStable == true {
-                    return "\(prefix) — your energy peaks then"
+                    return "\(prefix) — your morning peak"
                 }
                 if isEnergyPeak {
                     return "\(prefix) — peak focus window"
                 }
-                return "\(prefix) — best free peak"
+                return "\(prefix) — best free morning slot"
+            case .physicalPeak:
+                if isEnergyPeak, forecast?.chronotypeStable == true {
+                    return "\(prefix) — afternoon body-temp peak"
+                }
+                if isEnergyPeak {
+                    return "\(prefix) — peak performance window"
+                }
+                return "\(prefix) — best free afternoon slot"
             case .dip:
                 return "\(prefix) — afternoon dip, fine for chores"
             case .windDown:
@@ -265,11 +286,23 @@ enum HabitTimeSuggestion {
     }
 
     /// What kind of energy band a habit wants. Picked by
-    /// `TaskShape.classify(_:)` from canonical key + title keywords.
+    /// `TaskShape.classify(_:)` from canonical key + title keywords,
+    /// optionally upgraded by `HabitAITimeAdvisor` for ambiguous titles.
+    ///
+    /// The split between `.mentalPeak` and `.physicalPeak` mirrors real
+    /// chronobiology: cortisol-driven cognitive alertness peaks in the
+    /// morning, while body-temperature-driven physical performance peaks
+    /// in the late afternoon. Lumping them into a single `.peak` was
+    /// recommending 10 AM for "run" — fine cognitively, but worse than
+    /// 5 PM for actual running performance.
     enum TaskShape: Equatable {
-        /// High-cognitive or high-intensity: workouts, deep work, study,
-        /// hard meetings. Rewards proximity to one of the alertness peaks.
-        case peak
+        /// Cognitive deep work — coding, writing, learning, study. Rewards
+        /// the morning cortisol-driven alertness peak (~8–12).
+        case mentalPeak
+        /// Physical exertion — running, gym, HIIT, sport. Rewards the
+        /// afternoon body-temperature acrophase (~15–18) where lung
+        /// function, joint flexibility, and reaction time peak.
+        case physicalPeak
         /// Low-cognitive chores or recovery: laundry, dishes, easy walks,
         /// admin email, mindless errands. Rewards the post-lunch dip so
         /// the user doesn't burn a peak on something they could do tired.
@@ -281,7 +314,9 @@ enum HabitTimeSuggestion {
         /// midpoint of the curve.
         case flexible
 
-        var isPeak: Bool { self == .peak }
+        /// True for either peak. Drives the chip's "your energy peaks
+        /// then" copy when the suggestion lands at the right window.
+        var isPeak: Bool { self == .mentalPeak || self == .physicalPeak }
 
         /// Fallback heuristic when we have no forecast yet — uses raw
         /// clock time bands so brand-new users still see sensible chips
@@ -289,10 +324,19 @@ enum HabitTimeSuggestion {
         func clockHeuristic(for slot: Date) -> Double {
             let hour = Double(Calendar.current.component(.hour, from: slot))
             switch self {
-            case .peak:
-                // Peaks: 9–12 and 15–18 score high.
-                if (9...12).contains(hour) || (15...18).contains(hour) { return 1 }
-                if (8...19).contains(hour) { return 0.6 }
+            case .mentalPeak:
+                // Cognitive peak: 9–12 best; 8–13 acceptable.
+                if (9...11).contains(hour) { return 1 }
+                if (8...12).contains(hour) { return 0.85 }
+                if (13...18).contains(hour) { return 0.45 }
+                return 0.2
+            case .physicalPeak:
+                // Body-temp peak: 15–18 best; 6–8 morning is a viable
+                // second-best; everything else degrades fast.
+                if (16...17).contains(hour) { return 1 }
+                if (15...18).contains(hour) { return 0.9 }
+                if (6...8).contains(hour) { return 0.6 }
+                if (9...14).contains(hour) { return 0.4 }
                 return 0.2
             case .dip:
                 // Dip-friendly: 13–15.
@@ -316,8 +360,8 @@ enum HabitTimeSuggestion {
         ///
         /// Keyword matches use longest-match-wins so a title like
         /// "Run laundry" classifies as `.dip` (matched "laundry", 7
-        /// chars) instead of `.peak` ("run", 3 chars). Without this
-        /// fix the order of declaration in `keywordShape` silently
+        /// chars) instead of `.physicalPeak` ("run", 3 chars). Without
+        /// this fix the order of declaration in `keywordShape` silently
         /// determined the result.
         static func classify(canonicalKey: String?, title: String) -> TaskShape {
             if let canonicalKey, let shape = canonicalShape[canonicalKey] {
@@ -336,12 +380,13 @@ enum HabitTimeSuggestion {
 
         // Canonical keys map directly. Mirror with `CanonicalHabits.all`.
         private static let canonicalShape: [String: TaskShape] = [
-            // Peak — physical performance / cognition demand
-            "run":        .peak,
-            "workout":    .peak,
-            "cycle":      .peak,
-            "swim":       .peak,
-            "study":      .peak,
+            // Physical peak — exercise / sport
+            "run":        .physicalPeak,
+            "workout":    .physicalPeak,
+            "cycle":      .physicalPeak,
+            "swim":       .physicalPeak,
+            // Mental peak — cognitive work
+            "study":      .mentalPeak,
             // Flexible / movement (works in either peak)
             "walk":       .flexible,
             "yoga":       .flexible,
@@ -363,16 +408,30 @@ enum HabitTimeSuggestion {
             "screenTime": .flexible,
         ]
 
-        // Keyword fallback for free-text titles. Order matters — first
-        // match wins, so put more specific terms first.
+        // Keyword fallback for free-text titles. Longest match wins, not
+        // first match — so put more specific terms anywhere.
         private static let keywordShape: [(String, TaskShape)] = [
-            // Peak (deep / hard / physical)
-            ("gym", .peak), ("workout", .peak), ("run", .peak),
-            ("hiit", .peak), ("lift", .peak), ("crossfit", .peak),
-            ("study", .peak), ("focus", .peak), ("deep work", .peak),
-            ("write", .peak), ("code", .peak), ("debug", .peak),
-            ("review", .peak), ("interview", .peak), ("presentation", .peak),
-            ("exam", .peak), ("test", .peak),
+            // Physical peak (exercise / sport)
+            ("gym", .physicalPeak), ("workout", .physicalPeak),
+            ("run", .physicalPeak), ("hiit", .physicalPeak),
+            ("lift", .physicalPeak), ("crossfit", .physicalPeak),
+            ("swim", .physicalPeak), ("cycle", .physicalPeak),
+            ("bike", .physicalPeak), ("hike", .physicalPeak),
+            ("sport", .physicalPeak), ("tennis", .physicalPeak),
+            ("basketball", .physicalPeak), ("soccer", .physicalPeak),
+            ("football", .physicalPeak), ("climbing", .physicalPeak),
+            ("boxing", .physicalPeak), ("cardio", .physicalPeak),
+            ("dance", .physicalPeak), ("pilates", .physicalPeak),
+            ("rowing", .physicalPeak),
+            // Mental peak (deep work / learning)
+            ("study", .mentalPeak), ("focus", .mentalPeak),
+            ("deep work", .mentalPeak), ("write", .mentalPeak),
+            ("code", .mentalPeak), ("debug", .mentalPeak),
+            ("review", .mentalPeak), ("interview", .mentalPeak),
+            ("presentation", .mentalPeak), ("exam", .mentalPeak),
+            ("test", .mentalPeak), ("research", .mentalPeak),
+            ("design", .mentalPeak), ("learn", .mentalPeak),
+            ("read paper", .mentalPeak),
             // Dip (chores / errands / admin)
             ("laundry", .dip), ("wash", .dip), ("dishes", .dip),
             ("clean", .dip), ("vacuum", .dip), ("sweep", .dip),

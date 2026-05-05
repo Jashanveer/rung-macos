@@ -110,6 +110,13 @@ final class WatchSession: NSObject, ObservableObject {
             WatchMessageKey.action: WatchMessageAction.toggleHabit,
             WatchMessageKey.habitId: id
         ])
+        // Server's authoritative view (XP, streak, leaderboard rank,
+        // perfect-day heatmap) lands a moment after the iPhone digests
+        // our message. Pull it down so the watch isn't stuck on the
+        // optimistic delta forever — particularly important when WC is
+        // unreachable and the toggle is being relayed through the
+        // backend rather than the phone.
+        WatchBackendStore.shared.scheduleRefresh(after: 1.2)
     }
 
     /// Mutate `snapshot.pendingHabits` / `snapshot.completedHabits` to reflect
@@ -134,7 +141,9 @@ final class WatchSession: NSObject, ObservableObject {
             unitsLogged: target && row.unitsTarget > 0 ? row.unitsTarget : 0,
             unitsTarget: row.unitsTarget, unitsLabel: row.unitsLabel,
             isCompleted: target, sourceLabel: row.sourceLabel,
-            canonicalKey: row.canonicalKey
+            canonicalKey: row.canonicalKey,
+            entryType: row.entryType,
+            suggestionLabel: row.suggestionLabel
         )
         snap.pendingHabits   = snap.pendingHabits.filter   { $0.id != id }
         snap.completedHabits = snap.completedHabits.filter { $0.id != id }
@@ -209,6 +218,11 @@ final class WatchSession: NSObject, ObservableObject {
             WatchMessageKey.action: WatchMessageAction.createHabit,
             WatchMessageKey.title: trimmed
         ])
+        // Server reconciles the new row into the snapshot once the
+        // iPhone-side SwiftData insert + push completes; we re-fetch
+        // shortly after so the user sees the freshly-added habit
+        // appear in the list without waiting on the next poll tick.
+        WatchBackendStore.shared.scheduleRefresh(after: 1.5)
     }
 
     private func send(_ payload: [String: Any]) {
@@ -254,6 +268,18 @@ final class WatchSession: NSObject, ObservableObject {
 
     // MARK: - Snapshot ingestion
 
+    /// Wipe the in-memory snapshot and flip `hasReceivedRealData` back
+    /// off so the root view falls into the connecting / sign-in screen
+    /// the next render. Paired with `WatchAuthStore.clear()` +
+    /// `WatchBackendStore.stop()` to cover the full sign-out path —
+    /// the Account tab's Logout button calls all three.
+    func signOut() {
+        self.snapshot = .empty()
+        self.hasReceivedRealData = false
+        self.lastSendError = nil
+        WatchSnapshotCache.clear()
+    }
+
     /// Adopt a snapshot fetched directly from the backend by
     /// `WatchBackendStore`. Only overwrites the live snapshot when the
     /// backend payload is strictly newer than what's already on screen,
@@ -262,10 +288,23 @@ final class WatchSession: NSObject, ObservableObject {
     /// `hasReceivedRealData` exactly like a WC push so the existing
     /// SwiftUI gates work without modification.
     func acceptBackendSnapshot(_ snap: WatchSnapshot, updatedAt: Date) {
-        // The backend's `updatedAt` is when iPhone last uploaded. The
-        // WC channel's snapshot may be newer (iPhone in the same room),
-        // in which case we leave the live state alone.
-        if snap.generatedAt < self.snapshot.generatedAt {
+        // The backend's `updatedAt` is when iPhone last uploaded.
+        //
+        // We accept anything the server says is at-or-newer than what
+        // we're already displaying. A strict `<` rejected ties — and a
+        // freshly-restored snapshot from the local cache often has the
+        // same `generatedAt` as the backend payload (the iPhone built
+        // it once, both stores echo it). Letting equal timestamps
+        // through means a re-fetch always brings the watch back in
+        // sync with the server, fixing the "have to logout/login to
+        // see new data" footgun.
+        //
+        // We still avoid clobbering when the backend payload is
+        // strictly older than what's on screen — that protects an
+        // optimistic toggle the user just made from being undone by a
+        // stale server response that hadn't picked the change up yet.
+        if snap.generatedAt < self.snapshot.generatedAt
+            && self.hasReceivedRealData {
             return
         }
         self.snapshot = snap

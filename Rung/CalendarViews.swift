@@ -130,7 +130,7 @@ struct CalendarSheet: View {
                 )
                 .transition(.opacity.combined(with: .offset(y: 6)))
             case .energy:
-                EnergyView(service: SleepInsightsService.shared)
+                EnergyView(service: SleepInsightsService.shared, habits: habits)
                     .transition(.opacity.combined(with: .offset(y: 6)))
             }
         }
@@ -189,7 +189,7 @@ struct CalendarSheet: View {
                         onTapMonth: nil
                     )
                 case .energy:
-                    EnergyView(service: SleepInsightsService.shared)
+                    EnergyView(service: SleepInsightsService.shared, habits: habits)
                 }
             }
             .frame(height: 420)
