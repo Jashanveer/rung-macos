@@ -174,31 +174,243 @@ final class WatchBackendStore: ObservableObject {
         lastFetchAttemptedAt = Date()
         isFetching = true
         defer { isFetching = false }
+
+        // Run all three reads in parallel. The iPhone-built snapshot
+        // is the source for fields only iPhone can compute (energy,
+        // mentor messages, leaderboard, account, level/XP). The
+        // primary `/api/habits` + `/api/tasks` lists are the source
+        // of truth for what's checked off — fetching them directly
+        // means a habit toggled on iPad shows up on the wrist within
+        // one poll tick, even when iPhone hasn't re-uploaded its
+        // cached snapshot. Each fetch handles its own 401 → refresh.
+        async let snapshotResult = client.fetchSnapshot()
+        async let habitsResult = client.listHabits()
+        async let tasksResult = client.listTasks()
+
+        var snapshot: WatchSnapshot? = nil
+        var snapshotUpdatedAt: Date? = nil
+        var snapshotError: WatchBackendClient.Error? = nil
         do {
-            let result = try await client.fetchSnapshot()
-            lastError = nil
-            lastFetchedAt = result.updatedAt
-            // Merge against the live session — adopt anything the
-            // backend hands us that's at least as fresh as what we're
-            // showing. The server is authoritative for derived state
-            // (streak, XP, leaderboard) that the watch can't recompute
-            // locally, so a tie on `generatedAt` should still win.
-            WatchSession.shared.acceptBackendSnapshot(
-                result.snapshot,
-                updatedAt: result.updatedAt
+            let result = try await snapshotResult
+            snapshot = result.snapshot
+            snapshotUpdatedAt = result.updatedAt
+        } catch let err as WatchBackendClient.Error {
+            snapshotError = err
+        } catch {
+            snapshotError = .transport(error)
+        }
+
+        var habits: [WatchBackendClient.BackendHabitRow] = []
+        var tasks: [WatchBackendClient.BackendHabitRow] = []
+        do { habits = try await habitsResult } catch {}
+        do { tasks  = try await tasksResult  } catch {}
+
+        // Merge — primary endpoints win for the habit/task list, the
+        // iPhone-built snapshot wins for everything else. If the
+        // primary lists failed (network blip, server down) we fall
+        // back to the snapshot's own habits so the watch keeps
+        // rendering rather than going blank.
+        if let snapshot, let snapshotUpdatedAt {
+            let merged = mergeSnapshot(
+                snapshot,
+                habits: habits,
+                tasks: tasks,
+                hasLivePrimary: !habits.isEmpty || !tasks.isEmpty
             )
-        } catch let error as WatchBackendClient.Error {
-            // Only overwrite the previous error if this one is a real
-            // failure — `noSnapshotYet` is a normal first-launch state
-            // that shouldn't surface as a user-visible error if we
-            // already have cached data.
-            if case .noSnapshotYet = error,
+            lastError = nil
+            lastFetchedAt = snapshotUpdatedAt
+            WatchSession.shared.acceptBackendSnapshot(
+                merged,
+                updatedAt: snapshotUpdatedAt
+            )
+        } else if !habits.isEmpty || !tasks.isEmpty {
+            // Snapshot fetch failed but the primary lists succeeded —
+            // build a minimal snapshot from them. This is the
+            // standalone-without-iPhone case: a brand-new account
+            // has no `/api/watch/snapshot` payload yet but `/api/habits`
+            // already returns rows, so we can still paint Today.
+            let merged = mergeSnapshot(
+                WatchSession.shared.snapshot,
+                habits: habits,
+                tasks: tasks,
+                hasLivePrimary: true
+            )
+            lastError = nil
+            WatchSession.shared.acceptBackendSnapshot(merged, updatedAt: Date())
+        } else if let snapshotError {
+            // Both paths failed. Surface the snapshot error since
+            // that's the primary one users recognise.
+            if case .noSnapshotYet = snapshotError,
                WatchSession.shared.hasReceivedRealData {
                 return
             }
-            lastError = error.localizedDescription
-        } catch {
-            lastError = error.localizedDescription
+            lastError = snapshotError.localizedDescription
+        }
+    }
+
+    /// Replace the iPhone-built snapshot's `pendingHabits` /
+    /// `completedHabits` with rows freshly fetched from `/api/habits`
+    /// + `/api/tasks`. Falls back to the snapshot's lists when the
+    /// primary endpoints didn't produce anything — protects against
+    /// transient empty results that would briefly blank the watch.
+    /// Recomputes `metrics.doneToday` / `totalToday` from the new
+    /// rows so the daily-ring header stays in step with the merged
+    /// list.
+    private func mergeSnapshot(
+        _ snapshot: WatchSnapshot,
+        habits: [WatchBackendClient.BackendHabitRow],
+        tasks: [WatchBackendClient.BackendHabitRow],
+        hasLivePrimary: Bool
+    ) -> WatchSnapshot {
+        guard hasLivePrimary else { return snapshot }
+        let todayKey = snapshot.todayKey
+
+        var pending: [WatchSnapshot.WatchHabit] = []
+        var completed: [WatchSnapshot.WatchHabit] = []
+
+        // Pull title / suggestion / emoji metadata from the iPhone
+        // snapshot when it's there — the primary endpoints don't ship
+        // the AI suggestion label or the canonical-emoji map. Keyed
+        // by the same "b:<id>" string the snapshot uses so a row's
+        // sticky metadata survives a primary-driven refresh.
+        let snapshotById: [String: WatchSnapshot.WatchHabit] = {
+            var dict: [String: WatchSnapshot.WatchHabit] = [:]
+            for row in snapshot.pendingHabits + snapshot.completedHabits {
+                dict[row.id] = row
+            }
+            return dict
+        }()
+
+        for row in habits {
+            let watchRow = makeWatchHabit(
+                row, todayKey: todayKey, entryType: .habit,
+                inheritFrom: snapshotById["b:\(row.id)"]
+            )
+            if watchRow.isCompleted {
+                completed.append(watchRow)
+            } else {
+                pending.append(watchRow)
+            }
+        }
+        for row in tasks {
+            let watchRow = makeWatchHabit(
+                row, todayKey: todayKey, entryType: .task,
+                inheritFrom: snapshotById["b:\(row.id)"]
+            )
+            if watchRow.isCompleted {
+                completed.append(watchRow)
+            } else {
+                pending.append(watchRow)
+            }
+        }
+
+        let totalToday = pending.count + completed.count
+        let doneToday = completed.count
+
+        let metrics = WatchSnapshot.Metrics(
+            doneToday: doneToday,
+            totalToday: totalToday,
+            currentStreak: snapshot.metrics.currentStreak,
+            bestStreak: snapshot.metrics.bestStreak,
+            level: snapshot.metrics.level,
+            levelName: snapshot.metrics.levelName,
+            xp: snapshot.metrics.xp,
+            xpForNextLevel: snapshot.metrics.xpForNextLevel,
+            nextLevelProgress: snapshot.metrics.nextLevelProgress,
+            leaderboardRank: snapshot.metrics.leaderboardRank,
+            freezesAvailable: snapshot.metrics.freezesAvailable
+        )
+
+        return WatchSnapshot(
+            generatedAt: Date(),
+            todayKey: snapshot.todayKey,
+            weekdayShort: snapshot.weekdayShort,
+            timeOfDay: snapshot.timeOfDay,
+            pendingHabits: pending,
+            completedHabits: completed,
+            metrics: metrics,
+            leaderboard: snapshot.leaderboard,
+            calendarHeatmap: snapshot.calendarHeatmap,
+            calendarMonthLabel: snapshot.calendarMonthLabel,
+            account: snapshot.account,
+            mentorMessages: snapshot.mentorMessages,
+            energy: snapshot.energy,
+            perfectDays: snapshot.perfectDays
+        )
+    }
+
+    /// Build a `WatchSnapshot.WatchHabit` from a primary backend row.
+    /// Inherits emoji / suggestion / unit metadata from the iPhone
+    /// snapshot when it's available — those come from canonical-key
+    /// lookup tables and the AI advisor that only iPhone can compute.
+    /// New rows (not yet in the iPhone snapshot, e.g. created on
+    /// another device since the iPhone last uploaded) get sensible
+    /// fallbacks until iPhone catches up.
+    private func makeWatchHabit(
+        _ row: WatchBackendClient.BackendHabitRow,
+        todayKey: String,
+        entryType: WatchSnapshot.EntryType,
+        inheritFrom prior: WatchSnapshot.WatchHabit?
+    ) -> WatchSnapshot.WatchHabit {
+        let isCompleted = row.checksByDate[todayKey] ?? false
+        let isHealthKit: Bool = {
+            if let source = row.verificationSource {
+                return source.hasPrefix("healthKit") || source == "screenTimeSocial"
+            }
+            return prior?.kind == .healthKit
+        }()
+        let kind: WatchSnapshot.HabitKind = isHealthKit ? .healthKit : .manual
+        let emoji = prior?.emoji ?? Self.fallbackEmoji(for: row.canonicalKey)
+        let unitsTarget = prior?.unitsTarget ?? 0
+        let unitsLabel = prior?.unitsLabel ?? ""
+        let unitsLogged = isCompleted ? unitsTarget : 0
+        let progress: Double = isCompleted ? 1.0 : 0.0
+
+        return WatchSnapshot.WatchHabit(
+            id: "b:\(row.id)",
+            title: row.title,
+            emoji: emoji,
+            kind: kind,
+            progress: progress,
+            unitsLogged: unitsLogged,
+            unitsTarget: unitsTarget,
+            unitsLabel: unitsLabel,
+            isCompleted: isCompleted,
+            sourceLabel: kind == .healthKit ? "APPLE HEALTH" : "",
+            canonicalKey: row.canonicalKey,
+            entryType: entryType,
+            suggestionLabel: prior?.suggestionLabel
+        )
+    }
+
+    /// Tiny canonical-key → emoji fallback. Mirrors
+    /// `WatchDataModel.emojiByCanonicalKey` so a row that arrives
+    /// from the primary endpoint before the iPhone has uploaded its
+    /// canonical-emoji decoration still gets a glyph.
+    private static func fallbackEmoji(for canonicalKey: String?) -> String {
+        guard let key = canonicalKey else { return "\u{2022}" }
+        switch key {
+        case "run":         return "\u{1F3C3}"
+        case "workout":     return "\u{1F3CB}"
+        case "walk":        return "\u{1F6B6}"
+        case "yoga":        return "\u{1F9D8}"
+        case "cycle":       return "\u{1F6B4}"
+        case "swim":        return "\u{1F3CA}"
+        case "meditate":    return "\u{1F9D8}"
+        case "sleep":       return "\u{1F319}"
+        case "weighIn":     return "\u{2696}\u{FE0F}"
+        case "water":       return "\u{1F4A7}"
+        case "noAlcohol":   return "\u{1F6AB}"
+        case "screenTime":  return "\u{1F4F1}"
+        case "read":        return "\u{1F4DA}"
+        case "study":       return "\u{270F}\u{FE0F}"
+        case "journal":     return "\u{1F4DD}"
+        case "gratitude":   return "\u{1F64F}"
+        case "floss":       return "\u{1F9B7}"
+        case "makeBed":     return "\u{1F6CF}\u{FE0F}"
+        case "eatHealthy":  return "\u{1F957}"
+        case "family":      return "\u{1F46A}"
+        default:            return "\u{2022}"
         }
     }
 

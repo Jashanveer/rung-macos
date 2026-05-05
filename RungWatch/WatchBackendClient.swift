@@ -412,6 +412,102 @@ struct WatchBackendClient {
         let id: Int64
     }
 
+    // MARK: - Primary list endpoints (standalone read path)
+
+    /// One row from `/api/habits` or `/api/tasks` — the server-of-truth
+    /// shape. Mirrors `BackendHabit` on iOS but drops the SwiftData /
+    /// verification fields the watch UI doesn't need. The watch builds
+    /// its own snapshot from these so an iPad toggle shows up on the
+    /// wrist on the next 15 s poll, without the iPhone needing to be
+    /// running to re-upload its cached `/api/watch/snapshot` payload.
+    struct BackendHabitRow: Decodable {
+        let id: Int64
+        let title: String
+        let checksByDate: [String: Bool]
+        let canonicalKey: String?
+        let verificationSource: String?
+        let verificationTier: String?
+        let weeklyTarget: Int?
+        let createdAt: Date?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, title, checksByDate, canonicalKey
+            case verificationSource, verificationTier, weeklyTarget, createdAt
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.id = try c.decode(Int64.self, forKey: .id)
+            self.title = try c.decode(String.self, forKey: .title)
+            self.checksByDate = try c.decode([String: Bool].self, forKey: .checksByDate)
+            self.canonicalKey = try c.decodeIfPresent(String.self, forKey: .canonicalKey)
+            self.verificationSource = try c.decodeIfPresent(String.self, forKey: .verificationSource)
+            self.verificationTier = try c.decodeIfPresent(String.self, forKey: .verificationTier)
+            self.weeklyTarget = try c.decodeIfPresent(Int.self, forKey: .weeklyTarget)
+            // The server can return createdAt as either an ISO string
+            // or an epoch double depending on the deployment's
+            // serializer config — try both via the configured
+            // `dateDecodingStrategy`.
+            self.createdAt = try? c.decodeIfPresent(Date.self, forKey: .createdAt)
+        }
+    }
+
+    /// `GET /api/habits` — list of recurring habits. Auth-refreshing
+    /// retry mirrors the snapshot fetch path.
+    func listHabits() async throws -> [BackendHabitRow] {
+        await preemptivelyRefreshIfStale()
+        do {
+            return try await performList(path: "api/habits")
+        } catch Error.unauthorized {
+            try await refreshAccessToken()
+            return try await performList(path: "api/habits")
+        }
+    }
+
+    /// `GET /api/tasks` — list of one-shot tasks.
+    func listTasks() async throws -> [BackendHabitRow] {
+        await preemptivelyRefreshIfStale()
+        do {
+            return try await performList(path: "api/tasks")
+        } catch Error.unauthorized {
+            try await refreshAccessToken()
+            return try await performList(path: "api/tasks")
+        }
+    }
+
+    private func performList(path: String) async throws -> [BackendHabitRow] {
+        guard let token = WatchAuthStore.shared.current()?.accessToken else {
+            throw Error.noToken
+        }
+        var request = URLRequest(url: Self.baseURL.appendingPathComponent(path))
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw Error.transport(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw Error.http(-1)
+        }
+        switch http.statusCode {
+        case 200..<300:
+            do {
+                return try decoder.decode([BackendHabitRow].self, from: data)
+            } catch {
+                throw Error.decode(error)
+            }
+        case 401, 403:
+            throw Error.unauthorized
+        default:
+            throw Error.http(http.statusCode)
+        }
+    }
+
     /// Decoded backend response — mirror of `BackendAuthTokens` on iOS.
     struct AuthResult: Decodable {
         let accessToken: String
