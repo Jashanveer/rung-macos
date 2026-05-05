@@ -58,6 +58,23 @@ struct MentorCharacterView: View {
         backend.messages(matchID: backend.dashboard?.match?.id)
     }
 
+    /// Mentor messages still flagged unread by the server. Drives the
+    /// red counter on the character — was previously `messages.count`
+    /// (total chat history), which left the badge stuck at e.g. "13"
+    /// even after the user opened the chat. Server-side `markMatchRead`
+    /// clears `nudge` on read messages, so this count auto-zeroes on
+    /// the next dashboard refresh.
+    private var unreadNudgeCount: Int {
+        let me = backend.currentUserId
+        return messages.filter { msg in
+            // A nudge from the mentor is "unread" until the server
+            // clears the flag in response to markMatchRead.
+            guard msg.nudge else { return false }
+            if let me, String(msg.senderId) == me { return false }
+            return true
+        }.count
+    }
+
     /// Pending messages from the offline outbox for the active match.
     /// Surfaced through MentorChatBubble's `queuedMessages` so the
     /// user sees a "queued" pill on anything still waiting to send.
@@ -133,12 +150,12 @@ struct MentorCharacterView: View {
                 .opacity(largeMode ? 0 : 1)
                 .allowsHitTesting(!largeMode)
 
-            if hasUnread && !chatOpen {
+            if unreadNudgeCount > 0 && !chatOpen {
                 Circle()
                     .fill(.red)
                     .frame(width: 14, height: 14)
                     .overlay(
-                        Text("\(messages.count)")
+                        Text("\(unreadNudgeCount)")
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.white)
                     )
@@ -317,6 +334,14 @@ struct MentorCharacterView: View {
                 await backend.refreshDashboard()
             }
             await backend.markMatchRead(matchID: backend.dashboard?.match?.id)
+            // markMatchRead flips `nudge=false` on the server side for
+            // every unread mentor message. Pull a fresh dashboard so
+            // the local `messages` list reflects that — without this
+            // refresh the red badge counter (driven by `nudge==true`)
+            // stays painted with the stale count until the next
+            // background refresh tick.
+            await backend.responseCache.invalidateDashboard()
+            await backend.refreshDashboard()
         }
 
         chatAnimationTask = Task {

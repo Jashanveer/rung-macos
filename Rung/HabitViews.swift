@@ -1732,23 +1732,39 @@ private struct PerHabitTimeChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(alignment: .top, spacing: 4) {
             Image(systemName: iconName)
                 .font(.system(size: 8, weight: .bold))
+                // Pin the icon to the first text line so a wrapped
+                // suggestion ("Try 16:00 — late-afternoon body-temp
+                // acrophase") doesn't push the glyph mid-paragraph.
+                .padding(.top, 1.5)
             Text(suggestion.label)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                // Wrap up to two lines and grow the pill vertically.
+                // Previously `.lineLimit(1)` clipped the rationale at
+                // a tail ellipsis on iPhone, so the user couldn't read
+                // why the suggestion was that time. fixedSize(vertical)
+                // lets the pill grow taller while still letting the
+                // parent column constrain the width.
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(tint)
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 7)
         .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Capsule(style: .continuous)
+            // Switch to a rounded rect — a capsule renders a half-disc
+            // cap on each end, which looks awkward when the text wraps
+            // to two lines. Continuous corner radius matches the
+            // habit card's own corner geometry.
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(tint.opacity(colorScheme == .dark ? 0.16 : 0.10))
         )
         .overlay(
-            Capsule(style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(tint.opacity(0.30), lineWidth: 0.5)
         )
         .accessibilityLabel(Text(suggestion.label))
