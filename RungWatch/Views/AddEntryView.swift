@@ -17,12 +17,15 @@ import WatchKit
 /// otherwise it stays a habit (iPhone owns that classification).
 struct AddEntryView: View {
     @EnvironmentObject private var session: WatchSession
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.watchFontScale) private var scale: Double
 
     @State private var dictatedTitle: String = ""
     @State private var typeSheetShown: Bool = false
     @State private var didCommit: Bool = false
+    /// Surfaces the duplicate-title guard inline so the user sees
+    /// *why* the Add tap didn't create a row. Auto-clears the moment
+    /// they edit / re-dictate.
+    @State private var duplicateError: String? = nil
 
     var body: some View {
         ScrollView {
@@ -40,11 +43,24 @@ struct AddEntryView: View {
 
                 voiceButton
 
-                if !dictatedTitle.isEmpty {
+                if !dictatedTitle.isEmpty && !didCommit {
                     confirmCard
                 }
 
-                typeButton
+                if let duplicateError {
+                    Text(duplicateError)
+                        .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(WatchTheme.cRose)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12)
+                        .transition(.opacity)
+                }
+
+                if !didCommit {
+                    typeButton
+                }
 
                 Text("Speak the task or hit Type to use the keyboard.")
                     .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
@@ -72,6 +88,7 @@ struct AddEntryView: View {
     /// three input methods without forking the binding logic.
     private var voiceButton: some View {
         Button {
+            duplicateError = nil
             typeSheetShown = true
         } label: {
             ZStack {
@@ -136,6 +153,7 @@ struct AddEntryView: View {
 
                 Button {
                     dictatedTitle = ""
+                    duplicateError = nil
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .heavy))
@@ -157,6 +175,7 @@ struct AddEntryView: View {
 
     private var typeButton: some View {
         Button {
+            duplicateError = nil
             typeSheetShown = true
         } label: {
             HStack(spacing: 6) {
@@ -179,7 +198,7 @@ struct AddEntryView: View {
     // MARK: - Copy
 
     private var headlineText: String {
-        if didCommit { return "Added — back to today" }
+        if didCommit { return "Added · swipe to Today" }
         if dictatedTitle.isEmpty { return "Tap to dictate a task" }
         return "Review and add"
     }
@@ -189,16 +208,56 @@ struct AddEntryView: View {
     private func commit(_ raw: String) {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        // Duplicate guard — match against everything we know about
+        // (pending + completed). Case-insensitive, whitespace-trimmed,
+        // mirrors the iOS-side `Habit.duplicateMatchKey` so a title
+        // typed on watch reads as duplicate the same way it would on
+        // iPhone.
+        if isDuplicate(title: trimmed) {
+            #if canImport(WatchKit)
+            WKInterfaceDevice.current().play(.failure)
+            #endif
+            withAnimation(WatchMotion.snappy) {
+                duplicateError = "Already in your list — pick a different title."
+            }
+            return
+        }
+
         session.createHabit(title: trimmed)
-        didCommit = true
         #if canImport(WatchKit)
         WKInterfaceDevice.current().play(.success)
         #endif
-        // Brief celebration before bouncing back to the Today list so
-        // the user sees the success state. Timing matches the iOS app's
-        // toast dismissal (0.6s) so the muscle-memory carries over.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            dismiss()
+        // Switch into the celebration state. We DON'T dismiss — the
+        // Add screen is a tab, not a sheet, so dismiss() is a no-op.
+        // Instead clear the dictated text + the review card and let
+        // the user swipe back to Today (or stay here to dictate
+        // another). After ~1.5s reset to the idle "Tap to dictate"
+        // state so a future visit doesn't open mid-celebration.
+        withAnimation(WatchMotion.snappy) {
+            dictatedTitle = ""
+            duplicateError = nil
+            didCommit = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(WatchMotion.smooth) {
+                didCommit = false
+            }
+        }
+    }
+
+    /// True when the snapshot already contains a habit/task whose
+    /// trimmed-lowercased title matches `title`. Cheap O(n) scan; n
+    /// is at most a few dozen rows.
+    private func isDuplicate(title: String) -> Bool {
+        let key = title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !key.isEmpty else { return false }
+        let all = session.snapshot.pendingHabits + session.snapshot.completedHabits
+        return all.contains { row in
+            row.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == key
         }
     }
 }

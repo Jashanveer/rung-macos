@@ -36,13 +36,15 @@ final class WatchBackendStore: ObservableObject {
     private let client = WatchBackendClient()
     private var pollTask: Task<Void, Never>?
 
-    /// Tunable foreground poll interval. 30 s by default — fast enough
-    /// that a habit toggled on iOS feels live within one wrist-raise,
-    /// slow enough that a wrist worn all day doesn't burn through a
-    /// disproportionate amount of battery. The watch's connectivity
-    /// stack doesn't really wake the radio for these — it piggybacks
-    /// on whatever the system was already doing.
-    static let foregroundPollInterval: TimeInterval = 30
+    /// Tunable foreground poll interval. 15 s — fast enough that a
+    /// habit toggled on iPad / iPhone shows up on the wrist within a
+    /// glance, slow enough that an all-day wear doesn't burn through
+    /// disproportionate battery. The watch's connectivity stack
+    /// doesn't really wake the radio for these — it piggybacks on
+    /// whatever the system was already doing. ScenePhase-active
+    /// transitions (wrist raise) trigger an immediate refresh on top
+    /// of this, so the upper bound on staleness is ~one glance.
+    static let foregroundPollInterval: TimeInterval = 15
 
     /// Bumped on every successful or attempted fetch so callers can
     /// rate-limit their own refresh requests (e.g. avoid two rapid

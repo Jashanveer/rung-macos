@@ -307,16 +307,26 @@ final class WatchSession: NSObject, ObservableObject {
     // MARK: - Snapshot ingestion
 
     /// Bumped whenever the user toggles or creates an entry on the
-    /// watch. `acceptBackendSnapshot` honours this — a backend payload
-    /// is only allowed to replace the live snapshot when its
-    /// `generatedAt` is strictly newer than this stamp, so a polling
-    /// fetch that races a fresh tap can't revert what the user just
-    /// committed.
+    /// watch. `acceptBackendSnapshot` honours this for a short window
+    /// (`optimisticGuardWindow`) so a polling fetch racing a tap can't
+    /// revert what the user just committed. After the window the guard
+    /// expires automatically — otherwise iPad / iPhone-originated
+    /// changes that legitimately predate the tap (because the iPhone
+    /// hasn't re-uploaded its watch snapshot yet) would be locked out
+    /// forever and the watch would freeze on its optimistic state.
     private var lastOptimisticChangeAt: Date?
 
+    /// 4 seconds is generous enough to cover the iPhone's WC →
+    /// SwiftData → snapshot → upload roundtrip when reachable, and
+    /// the watch's direct-backend POST → SSE → iPhone re-upload path
+    /// when WC is dead. Past that window we trust the server; if it's
+    /// still showing stale data it's authoritative anyway.
+    private static let optimisticGuardWindow: TimeInterval = 4
+
     /// Mark that the watch just applied an optimistic mutation. Any
-    /// backend snapshot generated before this instant is treated as
-    /// stale (it pre-dates the user's tap) and gets dropped.
+    /// backend payload generated before this instant is dropped for
+    /// up to `optimisticGuardWindow` seconds; after that the stamp
+    /// is ignored regardless of age.
     fileprivate func markOptimisticChange() {
         lastOptimisticChangeAt = Date()
     }
@@ -360,13 +370,22 @@ final class WatchSession: NSObject, ObservableObject {
             && self.hasReceivedRealData {
             return
         }
-        // Optimistic guard: if the user just toggled or created
-        // something on the watch, any backend payload generated before
-        // that tap is by definition stale — it can't have seen the
-        // change yet. Dropping it prevents the "tap → momentary check
-        // → silent revert" footgun the previous version had.
-        if let stamp = lastOptimisticChangeAt, snap.generatedAt < stamp {
-            return
+        // Optimistic guard: for ~4s after a watch-side tap any backend
+        // payload generated before that tap is dropped. Past the
+        // window the stamp expires so iPad / iPhone-originated changes
+        // (which legitimately predate the tap because iPhone hasn't
+        // re-uploaded its snapshot yet) flow through to the watch.
+        if let stamp = lastOptimisticChangeAt {
+            let stampAge = Date().timeIntervalSince(stamp)
+            if stampAge < Self.optimisticGuardWindow,
+               snap.generatedAt < stamp {
+                return
+            }
+            // Window expired — clear so subsequent fetches don't even
+            // reach this branch.
+            if stampAge >= Self.optimisticGuardWindow {
+                lastOptimisticChangeAt = nil
+            }
         }
         self.snapshot = snap
         self.hasReceivedRealData = !snap.account.handle.isEmpty
