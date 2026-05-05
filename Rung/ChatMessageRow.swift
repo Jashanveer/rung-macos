@@ -10,9 +10,13 @@ struct ChatMessageRow: View {
             if isFromCurrentUser { Spacer(minLength: 40) }
 
             VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 2) {
-                Text(message.senderName)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    if isFromCurrentUser, let timeLabel { timeText(timeLabel) }
+                    Text(message.senderName)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    if !isFromCurrentUser, let timeLabel { timeText(timeLabel) }
+                }
 
                 Text(Self.humanize(message.message))
                     .font(.system(size: 12))
@@ -33,6 +37,23 @@ struct ChatMessageRow: View {
         }
     }
 
+    /// "9:47 AM" today, "Yesterday 9:47 AM" yesterday, "Mon 9:47 AM"
+    /// within the past week, full date otherwise. Returns nil when the
+    /// server timestamp is malformed so the caller hides the slot
+    /// rather than rendering a broken value.
+    private var timeLabel: String? {
+        guard let date = Self.parseISO(message.createdAt) else { return nil }
+        return Self.timestamp(for: date, now: Date())
+    }
+
+    @ViewBuilder
+    private func timeText(_ label: String) -> some View {
+        Text(label)
+            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .tracking(0.2)
+            .foregroundStyle(.secondary)
+    }
+
     private var messageBubbleColor: Color {
         if isFromCurrentUser {
             return Color(red: 0.20, green: 0.62, blue: 0.36)
@@ -40,6 +61,48 @@ struct ChatMessageRow: View {
         return colorScheme == .dark
             ? Color.green.opacity(0.16)
             : Color(red: 0.88, green: 0.96, blue: 0.90)
+    }
+
+    private static let isoParser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoParserFallback: ISO8601DateFormatter = {
+        ISO8601DateFormatter()
+    }()
+
+    static func parseISO(_ raw: String) -> Date? {
+        isoParser.date(from: raw) ?? isoParserFallback.date(from: raw)
+    }
+
+    /// Localised, day-aware timestamp. Today shows just the time;
+    /// yesterday prefixes "Yesterday"; within the week shows the
+    /// abbreviated weekday; older falls back to full date+time. Uses
+    /// the user's locale so the AM/PM vs 24h split matches the system
+    /// settings.
+    static func timestamp(for date: Date, now: Date) -> String {
+        let cal = Calendar.current
+        let timeFmt = DateFormatter()
+        timeFmt.locale = .autoupdatingCurrent
+        timeFmt.timeStyle = .short
+        timeFmt.dateStyle = .none
+        let timeStr = timeFmt.string(from: date)
+        if cal.isDateInToday(date)     { return timeStr }
+        if cal.isDateInYesterday(date) { return "Yesterday \(timeStr)" }
+        let dayDelta = cal.dateComponents([.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: now)).day ?? 0
+        if dayDelta < 7 {
+            let weekday = DateFormatter()
+            weekday.locale = .autoupdatingCurrent
+            weekday.dateFormat = "EEE"
+            return "\(weekday.string(from: date)) \(timeStr)"
+        }
+        let dateFmt = DateFormatter()
+        dateFmt.locale = .autoupdatingCurrent
+        dateFmt.dateStyle = .short
+        dateFmt.timeStyle = .short
+        return dateFmt.string(from: date)
     }
 
     /// Strip common Markdown markers from chat content so the bubble reads as

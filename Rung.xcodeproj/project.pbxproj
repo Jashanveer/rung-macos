@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		944AB57390090127A4CAF17E /* RungWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C1DA33907F824AA520B8E3E6 /* RungWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9B49CD9F2F9BD0CD001B86CD /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9B49CD9E2F9BD0CD001B86CD /* DeviceActivity.framework */; };
-		9B49CDA72F9BD0CE001B86CD /* ScreenTimeMonitor.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 9B49CD9C2F9BD0CC001B86CD /* ScreenTimeMonitor.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9BD3C28B2FA1A18D00F9F0E5 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
 		FA112B4AA34979A6793FF969 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BA2258DC3FD83B9BA649C1D7 /* WidgetKit.framework */; };
 		FC69D715931379676998B8A7 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EAFAFB09EE3A870B45A5981A /* Cocoa.framework */; platformFilters = (macos, ); };
@@ -60,7 +59,6 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				9B49CDA72F9BD0CE001B86CD /* ScreenTimeMonitor.appex in Embed App Extensions */,
 				944AB57390090127A4CAF17E /* RungWidgets.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
@@ -300,7 +298,6 @@
 			);
 			dependencies = (
 				597966E2F1E90C04BB45797F /* PBXTargetDependency */,
-				9B49CDA62F9BD0CE001B86CD /* PBXTargetDependency */,
 				9BWATCH0010000000000010 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (

@@ -1120,6 +1120,11 @@ struct HabitListSection: View {
     var clusters: [AccountabilityDashboard.HabitTimeCluster] = []
     var stampNamespace: Namespace.ID? = nil
     var isFrozenToday: Bool = false
+    /// All day keys protected by a streak freeze (any day, not just
+    /// today). Threaded through to HabitCard for the past-7 dot strip
+    /// so frozen rest days paint blue instead of red. Defaults to []
+    /// so existing call sites don't need to know about freezes.
+    var frozenDayKeys: Set<String> = []
     /// Today's energy curve, used by per-habit time chips. Optional so
     /// the list still renders before HK has built three nights.
     var forecast: EnergyForecast? = nil
@@ -1211,6 +1216,7 @@ struct HabitListSection: View {
                         cluster: cluster(for: habit),
                         stampNamespace: stampNamespace,
                         isFrozen: isFrozenToday,
+                        frozenDayKeys: frozenDayKeys,
                         timingStats: habit.localUUID.flatMap { statsByHabit[$0] },
                         timeSuggestion: suggestion(for: habit)
                     )
@@ -1383,6 +1389,12 @@ struct HabitCard: View {
     /// visually (icy-blue, snowflake) without mutating the underlying
     /// `completedDayKeys` — local metrics remain the source of truth.
     var isFrozen: Bool = false
+    /// All day keys protected by a streak freeze (any day, not just today).
+    /// Drives the past-7-day dot strip so a frozen rest day reads as blue
+    /// rather than red. Defaults to empty so call sites that haven't wired
+    /// the dashboard's `rewards.frozenDates` through still compile and
+    /// fall back to "no freezes seen".
+    var frozenDayKeys: Set<String> = []
     /// Per-habit "usually 7:42 AM · 18 min" rollup, computed by the parent
     /// from `[HabitCompletion]`. Nil for habits without enough samples.
     var timingStats: HabitTimingStats? = nil
@@ -1421,7 +1433,16 @@ struct HabitCard: View {
     }
     private var currentStreak: Int { HabitMetrics.currentStreak(for: habit.completedDayKeys, endingAt: todayKey) }
     private var bestStreak: Int { HabitMetrics.bestStreak(for: habit.completedDayKeys) }
-    private var recentDays: [DayInfo] { DateKey.recentDays(count: 7) }
+    /// Anchor the past-7 strip on the same `todayKey` the rest of this
+    /// view computes against. Defaulting `recentDays` to `Date()` (its
+    /// signature default) was a subtle drift source — the parent passes
+    /// a `todayKey` that may differ from a freshly-evaluated `Date()`
+    /// at the moment SwiftUI re-renders this struct (computed-property
+    /// timing varies between macOS and iPad), which would shift the
+    /// strip by a day and double-count today as missed.
+    private var recentDays: [DayInfo] {
+        DateKey.recentDays(count: 7, endingAt: DateKey.date(from: todayKey))
+    }
     private var completionTint: Color {
         if isFrozen { return Color.cyan }
         if isAutoVerified { return Color.pink }
@@ -1461,6 +1482,41 @@ struct HabitCard: View {
     private var dueDateText: String? {
         guard habit.entryType == .task, let due = habit.dueAt else { return nil }
         return DueDateFormat.relative(due)
+    }
+
+    /// Per-day color for the past-7 dot strip. Resolves to:
+    ///   green   — completed
+    ///   red     — past day with no completion and no rest excuse (missed)
+    ///   neutral — rest days (streak-frozen / weekly-target rest budget),
+    ///             today/future not yet completed, and all tasks
+    ///
+    /// Rest days deliberately stay neutral so the strip reads as a
+    /// pass/fail history. Tasks collapse to a simple done/pending
+    /// palette since they don't carry daily-pattern semantics.
+    private func dotColor(for day: DayInfo) -> Color {
+        let key = day.key
+        let completed = habit.completedDayKeys.contains(key)
+        let neutral = CleanShotTheme.controlFill(for: colorScheme)
+        // Tasks: keep the simple done/pending palette.
+        guard isHabitEntry else {
+            return completed ? CleanShotTheme.success : neutral
+        }
+        if completed {
+            return CleanShotTheme.success
+        }
+        // Rest day — either an explicit streak-freeze on this date or
+        // the weekly-target rest budget covered it. Stays neutral per
+        // the user's spec ("don't color, keep it as it is").
+        let dayWasFrozen = (key == todayKey && isFrozen) || frozenDayKeys.contains(key)
+        if dayWasFrozen || habit.isSatisfied(on: key) {
+            return neutral
+        }
+        // Past + not done + not rest = missed. Today/future stay neutral
+        // because the user hasn't lost their chance yet.
+        if key < todayKey {
+            return CleanShotTheme.danger.opacity(0.75)
+        }
+        return neutral
     }
 
     var body: some View {
@@ -1533,46 +1589,67 @@ struct HabitCard: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    if isHabitEntry {
-                        if let status = autoVerifyStatus {
-                            // Replaces the flame/trophy labels for
-                            // auto-verified habits — the circle's
-                            // appearance already carries the streak
-                            // meaning and we don't want users to think
-                            // they earned the streak by tapping.
-                            Label(status, systemImage: "heart.text.square.fill")
-                                .foregroundStyle(Color.pink.opacity(0.85))
-                        } else {
-                            if currentStreak > 0 {
-                                Label("\(currentStreak)d", systemImage: "flame.fill")
-                                    .foregroundStyle(CleanShotTheme.warning)
+                HStack(alignment: .center, spacing: 8) {
+                    Group {
+                        if isHabitEntry {
+                            if let status = autoVerifyStatus {
+                                // Replaces the flame/trophy labels for
+                                // auto-verified habits — the circle's
+                                // appearance already carries the streak
+                                // meaning and we don't want users to think
+                                // they earned the streak by tapping.
+                                Label(status, systemImage: "heart.text.square.fill")
+                                    .foregroundStyle(Color.pink.opacity(0.85))
+                            } else {
+                                HStack(spacing: 8) {
+                                    if currentStreak > 0 {
+                                        Label("\(currentStreak)d", systemImage: "flame.fill")
+                                            .foregroundStyle(CleanShotTheme.warning)
+                                    }
+                                    if bestStreak > 0 {
+                                        Label("\(bestStreak)d best", systemImage: "trophy.fill")
+                                            .foregroundStyle(CleanShotTheme.gold)
+                                    }
+                                }
                             }
-                            if bestStreak > 0 {
-                                Label("\(bestStreak)d best", systemImage: "trophy.fill")
-                                    .foregroundStyle(CleanShotTheme.gold)
-                            }
-                        }
-                    } else {
-                        if let dueDateText {
-                            Label(dueDateText, systemImage: "calendar")
-                                .foregroundStyle(isOverdue ? CleanShotTheme.danger : .secondary)
                         } else {
-                            Label("Task", systemImage: "checklist")
-                                .foregroundStyle(.secondary)
+                            if let dueDateText {
+                                Label(dueDateText, systemImage: "calendar")
+                                    .foregroundStyle(isOverdue ? CleanShotTheme.danger : .secondary)
+                            } else {
+                                Label("Task", systemImage: "checklist")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
+                    // Allow the leading status/streak slot to ellipsize
+                    // so the trailing dots never lose width to a long
+                    // label. iPad's "Auto-checks on iPhone (Apple
+                    // Health)" copy was previously stealing horizontal
+                    // budget from the strip, and SwiftUI cropped the
+                    // trailing day(s) — which is why iPad and macOS
+                    // showed different missed-day counts for the same
+                    // underlying data.
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(0)
+
+                    Spacer(minLength: 4)
+
+                    // Explicit fixed-width container guarantees the
+                    // strip always gets its full 7×6pt + 6×3pt = 60pt
+                    // regardless of label length; `.layoutPriority(1)`
+                    // tells SwiftUI to honor this slot before
+                    // compressing the leading label.
                     HStack(spacing: 3) {
                         ForEach(recentDays) { day in
                             Circle()
-                                .fill(
-                                    habit.completedDayKeys.contains(day.key)
-                                        ? completionTint
-                                        : CleanShotTheme.controlFill(for: colorScheme)
-                                )
+                                .fill(dotColor(for: day))
                                 .frame(width: 6, height: 6)
                         }
                     }
+                    .frame(width: 60, alignment: .trailing)
+                    .layoutPriority(1)
                 }
                 .font(.caption2.weight(.semibold))
 

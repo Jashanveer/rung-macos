@@ -255,9 +255,46 @@ extension HabitBackendStore {
 
     func markMatchRead(matchID: Int64?) async {
         guard let matchID, token != nil else { return }
-        do { try await accountabilityRepository.markMatchRead(matchId: matchID) } catch {
+        do {
+            try await accountabilityRepository.markMatchRead(matchId: matchID)
+            // Optimistic local clear — the SSE `liveMessagesByMatch`
+            // cache holds messages with their original `nudge=true`
+            // flag, and the unread badge on the mentor character sums
+            // those flags. Without this mutate the badge stays stuck
+            // at the pre-open count until the next dashboard refresh
+            // (and even then, the live cache wins, so it never clears
+            // for users with active SSE streams). Replace each cached
+            // message with a copy where `nudge=false` so the badge
+            // recomputes to 0 immediately on chat open.
+            clearLocalNudgeFlags(matchID: matchID)
+        } catch {
             handleAuthenticatedRequestError(error)
         }
+    }
+
+    /// Strips `nudge=true` from every cached message for `matchID` —
+    /// used by `markMatchRead` so the unread counter on the mentor
+    /// avatar zeroes out the moment the chat opens. Only touches the
+    /// SSE live cache because `messages()` reads that array first
+    /// when it exists; the dashboard snapshot itself is `let`-bound
+    /// (immutable), and the openChat flow follows this call with a
+    /// dashboard invalidate + refresh that picks up the server-fresh
+    /// `nudge=false` rows for the dashboard slot.
+    private func clearLocalNudgeFlags(matchID: Int64) {
+        guard let live = liveMessagesByMatch[matchID] else { return }
+        liveMessagesByMatch[matchID] = live.map(Self.withNudgeCleared)
+    }
+
+    private static func withNudgeCleared(_ msg: AccountabilityDashboard.Message) -> AccountabilityDashboard.Message {
+        guard msg.nudge else { return msg }
+        return AccountabilityDashboard.Message(
+            id: msg.id,
+            senderId: msg.senderId,
+            senderName: msg.senderName,
+            message: msg.message,
+            nudge: false,
+            createdAt: msg.createdAt
+        )
     }
 
     func sendNudge(matchId: Int64) async {

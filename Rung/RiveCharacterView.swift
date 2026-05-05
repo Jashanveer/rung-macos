@@ -186,15 +186,8 @@ struct MentorCharacterView: View {
 
                 MentorChatBubble(
                     mentorName: mentorName,
-                    // Default to true: the only mentor flow this app ships
-                    // today is the AI mentor (Bruce). Without the default,
-                    // the chat header reads "Your mentor" during the brief
-                    // window between opening the bubble and the dashboard
-                    // refresh landing the match — which is misleading since
-                    // there's no human-mentor variant to disambiguate from.
-                    isAI: backend.dashboard?.match?.aiMentor ?? true,
                     messages: messages,
-                    isMentorTyping: (backend.dashboard?.match?.aiMentor ?? true) && backend.aiMentorTyping,
+                    isMentorTyping: backend.aiMentorTyping,
                     messageText: $messageText,
                     inlineError: inlineChatError,
                     currentUserId: backend.currentUserId,

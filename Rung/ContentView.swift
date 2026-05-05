@@ -32,6 +32,12 @@ struct ContentView: View {
     /// appear) and concurrent flushOutbox passes will both pick up the same
     /// pendingCreates, double-uploading every queued habit. Single-flight here.
     @State private var isSyncing = false
+    /// True when a sync was requested while another was already in flight.
+    /// Cleared when the in-flight sync's defer fires the follow-up; without
+    /// this queueing, user-initiated refreshes (calendar open, pull-to-
+    /// refresh) silently no-op when a launch-time sync is still running,
+    /// leaving the UI painted from cached / stale data.
+    @State private var pendingSyncRequest = false
     @Namespace private var stampNamespace
 
     private var showOnboarding: Bool { backend.isAuthenticated && !hasCompletedOnboarding }
@@ -57,8 +63,9 @@ struct ContentView: View {
         !showOnboarding && !progressOpen && !settingsOpen && !calendarOpen
     }
 
-    // AI mentor is always on once the user is signed in — but only on the
-    // dashboard. Any overlay (onboarding, stats sidebar, settings, calendar)
+    // Bruce is always visible once the user is signed in — the AI chat
+    // experience is gated separately inside the chat bubble. Any
+    // overlay (onboarding, stats sidebar, settings, calendar) still
     // suppresses Bruce so he doesn't peek out from behind the cover.
     private var showMentorCharacter: Bool {
         backend.isAuthenticated && isDashboardForeground
@@ -375,7 +382,15 @@ struct ContentView: View {
     private func syncWithBackend() {
         guard backend.isAuthenticated else { return }
         guard !isSyncing else {
-            print("[Sync] skip — another sync is already in flight")
+            // Queue a follow-up sync so the request isn't silently
+            // dropped. This matters for the calendar's open-time
+            // refresh: if the launch sync is still running and grabbed
+            // a stale cached habit list, the calendar's request would
+            // previously bail and the user would see yesterday's
+            // perfect-day grid until the next ambient tick. Queuing
+            // guarantees the post-invalidate fresh pull always runs.
+            print("[Sync] queueing follow-up — another sync is already in flight")
+            pendingSyncRequest = true
             return
         }
         print("[Sync] syncWithBackend start localHabits=\(habits.count)")
@@ -383,7 +398,18 @@ struct ContentView: View {
 
         Task {
             defer {
-                Task { @MainActor in isSyncing = false }
+                Task { @MainActor in
+                    isSyncing = false
+                    // Drain a queued request, if any. One re-fire is
+                    // enough — if multiple requests stacked up while
+                    // the in-flight sync ran, they all wanted the
+                    // same thing (the latest server state), and the
+                    // single re-fire delivers it.
+                    if pendingSyncRequest {
+                        pendingSyncRequest = false
+                        syncWithBackend()
+                    }
+                }
             }
             do {
                 try await flushOutbox()

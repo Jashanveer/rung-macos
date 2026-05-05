@@ -2,10 +2,7 @@ import SwiftUI
 
 struct MentorChatBubble: View {
     let mentorName: String
-    var isAI: Bool = false
     /// Already sorted chronologically (oldest → newest) by HabitBackendStore.
-    /// The bubble itself flips this to newest-first for display so the
-    /// latest message is the first thing the user sees.
     let messages: [AccountabilityDashboard.Message]
     /// True while we're waiting on the AI mentor's reply. Renders a
     /// three-dot typing bubble below the last message so the user gets
@@ -30,15 +27,19 @@ struct MentorChatBubble: View {
     @Environment(\.colorScheme) private var colorScheme
     @FocusState private var inputFocused: Bool
 
-    // Sentinel placed at the TOP of the scroll contents — we render
-    // newest-first now, so this is the auto-scroll anchor.
-    private let topAnchorID = "chat-top-anchor"
+    // Sentinel placed at the BOTTOM of the scroll contents. Standard
+    // messaging UX (iMessage / WhatsApp / Slack) keeps the latest
+    // message at the bottom of the thread and lands the user there on
+    // open — that's what users expect, and what the previous
+    // newest-on-top inversion was breaking.
+    private let bottomAnchorID = "chat-bottom-anchor"
 
-    /// Newest-first display order. The user explicitly asked for the
-    /// latest message at the top so they don't have to scroll past
-    /// stale history every time the chat opens.
+    /// Chronological display order — oldest at top, newest at bottom.
+    /// The auto-scroll anchor below pins the viewport to the latest
+    /// message so the user always lands on the newest content even
+    /// when they have hundreds of messages of history.
     private var displayMessages: [AccountabilityDashboard.Message] {
-        messages.reversed()
+        messages
     }
 
     var body: some View {
@@ -62,13 +63,8 @@ struct MentorChatBubble: View {
                     .fill(.green)
                     .frame(width: 8, height: 8)
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(mentorName)
-                            .font(.system(size: 13, weight: .semibold))
-                        if isAI {
-                            MentorAIBadge()
-                        }
-                    }
+                    Text(mentorName)
+                        .font(.system(size: 13, weight: .semibold))
                     Text(subtitleText)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
@@ -88,36 +84,15 @@ struct MentorChatBubble: View {
 
             Divider()
 
-            // Messages — rendered NEWEST → OLDEST. Typing indicator and
-            // the empty-state both pin to the top so a fresh inbound
-            // reply slides in above the older history.
+            // Messages — rendered chronologically (oldest top, newest
+            // bottom) to match every standard messaging surface the
+            // user already knows. The auto-scroll target is a 1pt
+            // sentinel pinned BELOW the typing indicator so the
+            // viewport always lands on the freshest content on open
+            // and on every new message.
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        // Top sentinel for auto-scroll-to-newest.
-                        Color.clear
-                            .frame(height: 1)
-                            .id(topAnchorID)
-
-                        if isMentorTyping {
-                            TypingIndicatorRow(mentorName: mentorName)
-                                .id("typing-indicator")
-                                .transition(.asymmetric(
-                                    insertion: .scale(scale: 0.85, anchor: .topLeading).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
-                        }
-
-                        // Queued (offline) messages appear above the
-                        // server transcript so the user can see what's
-                        // waiting to deliver. Reverse to keep
-                        // newest-first like the rest of the thread.
-                        ForEach(queuedMessages.reversed()) { entry in
-                            QueuedMessageRow(message: entry)
-                                .id(entry.id)
-                                .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
-                        }
-
                         if messages.isEmpty && !isMentorTyping && queuedMessages.isEmpty {
                             Text("Say hi to your mentor!")
                                 .font(.system(size: 12))
@@ -130,22 +105,60 @@ struct MentorChatBubble: View {
                             ChatMessageRow(message: msg, isFromCurrentUser: isFromCurrentUser(msg))
                                 .id(msg.id)
                                 .transition(.asymmetric(
-                                    insertion: .scale(scale: 0.92, anchor: .top).combined(with: .opacity),
+                                    insertion: .scale(scale: 0.92, anchor: .bottom).combined(with: .opacity),
                                     removal: .opacity
                                 ))
                         }
+
+                        // Outbox queue — pending sends sit just below
+                        // the server transcript and above the typing
+                        // indicator so the user reads them in send
+                        // order. Submission order is already
+                        // chronological so no reverse is needed.
+                        ForEach(queuedMessages) { entry in
+                            QueuedMessageRow(message: entry)
+                                .id(entry.id)
+                                .transition(.scale(scale: 0.95, anchor: .bottom).combined(with: .opacity))
+                        }
+
+                        if isMentorTyping {
+                            TypingIndicatorRow(mentorName: mentorName)
+                                .id("typing-indicator")
+                                .transition(.asymmetric(
+                                    insertion: .scale(scale: 0.85, anchor: .bottomLeading).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                        }
+
+                        // Bottom sentinel — the universal scroll
+                        // target. Sits below everything so .bottom
+                        // anchoring always pins the latest content
+                        // into view.
+                        Color.clear
+                            .frame(height: 1)
+                            .id(bottomAnchorID)
                     }
                     .padding(10)
                     .animation(.spring(response: 0.4, dampingFraction: 0.85), value: messages.count)
                 }
                 .onChange(of: messages.count) { _, _ in
-                    scrollToTop(proxy: proxy, animated: true)
+                    scrollToBottom(proxy: proxy, animated: true)
                 }
                 .onChange(of: isMentorTyping) { _, _ in
-                    scrollToTop(proxy: proxy, animated: true)
+                    scrollToBottom(proxy: proxy, animated: true)
                 }
                 .onAppear {
-                    scrollToTop(proxy: proxy, animated: false)
+                    // Two-pass scroll: an immediate non-animated jump
+                    // pins the viewport before the cells render, then
+                    // a follow-up animated pass settles to the exact
+                    // bottom once the LazyVStack has measured its
+                    // final size. Without the second pass the chat
+                    // can land 1-2 messages above the actual newest.
+                    scrollToBottom(proxy: proxy, animated: false)
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
                 }
             }
 
@@ -214,24 +227,23 @@ struct MentorChatBubble: View {
         )
     }
 
-    private func scrollToTop(proxy: ScrollViewProxy, animated: Bool) {
-        // With newest-first ordering, the freshest content lives at the
-        // top of the scroll view — anchor on the typing indicator when
-        // it's showing, else the top sentinel. Either way, the user
-        // lands on the latest message without scrolling.
-        let target = isMentorTyping ? "typing-indicator" : topAnchorID
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        // Always anchor on the bottom sentinel so the viewport lands
+        // on the freshest content regardless of whether the typing
+        // indicator is up. `.bottom` anchor pins the sentinel to the
+        // bottom of the visible viewport, which is what users expect.
         if animated {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                proxy.scrollTo(target, anchor: .top)
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
         } else {
-            proxy.scrollTo(target, anchor: .top)
+            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
         }
     }
 
     private var subtitleText: String {
         if isMentorTyping { return "typing…" }
-        return isAI ? "AI mentor — until a human matches" : "Your mentor"
+        return "Your mentor"
     }
 
     private func isFromCurrentUser(_ message: AccountabilityDashboard.Message) -> Bool {
@@ -339,33 +351,3 @@ private struct QueuedMessageRow: View {
     }
 }
 
-/// Subtle pill badge marking the mentor as AI. Tinted with the app accent so
-/// it reads as part of the chrome rather than a system warning.
-private struct MentorAIBadge: View {
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 8, weight: .semibold))
-            Text("AI")
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(0.4)
-        }
-        .foregroundStyle(CleanShotTheme.accent.opacity(colorScheme == .dark ? 0.92 : 0.85))
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-            Capsule(style: .continuous)
-                .fill(CleanShotTheme.accent.opacity(colorScheme == .dark ? 0.16 : 0.10))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(
-                    CleanShotTheme.accent.opacity(colorScheme == .dark ? 0.32 : 0.22),
-                    lineWidth: 0.5
-                )
-        )
-        .accessibilityLabel("AI mentor")
-    }
-}

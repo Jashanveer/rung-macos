@@ -314,9 +314,24 @@ struct PhoneTabScaffold: View {
         ZStack {
             MinimalBackground().ignoresSafeArea()
 
-            CalendarSheet(habits: habits, onClose: {})
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
+            CalendarSheet(
+                habits: habits,
+                onClose: {},
+                // Invalidate the 5s habits cache before pulling so the
+                // calendar always sees the freshest server state — a
+                // sync that fired moments earlier (e.g. from launch or
+                // pull-to-refresh) would otherwise leave cached habit
+                // data in place and the perfect-day grid would paint
+                // against yesterday's snapshot.
+                onAppearSync: {
+                    Task {
+                        await backend.responseCache.invalidateHabits()
+                        await MainActor.run { onSync() }
+                    }
+                }
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 4)
         }
         .refreshable { onSync() }
     }

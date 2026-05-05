@@ -131,6 +131,7 @@ struct CenterPanel: View {
                         clusters: clusters,
                         stampNamespace: enableStampMatchedGeometry ? stampNamespace : nil,
                         isFrozenToday: isFrozenToday,
+                        frozenDayKeys: Set(backendStore?.dashboard?.rewards.frozenDates ?? []),
                         forecast: sleepService.forecast,
                         todaysEvents: calendarService.todaysEvents,
                         syncedPerHabit: syncedSuggestion?.dayKey == todayKey

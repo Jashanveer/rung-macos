@@ -178,7 +178,13 @@ private struct EntryRow: View {
                 compactBody
             }
         }
-        .gesture(longPressIfTask)
+        // Run alongside the Button's tap recognizer instead of competing
+        // with it — `.gesture()` (lower priority) lets the Button win the
+        // recognition contest until the system gives up, which felt like
+        // a 10-second hold. Simultaneous lets both gestures advance on
+        // their own clocks so the long-press fires the instant the
+        // duration is met.
+        .simultaneousGesture(longPressIfTask)
     }
 
     @ViewBuilder
@@ -363,9 +369,16 @@ private struct EntryRow: View {
     /// Hand the row off on long-press only when the parent supplied a
     /// handler — this is how HabitsTab gates Pomodoro to tasks only.
     private var longPressIfTask: some Gesture {
-        LongPressGesture(minimumDuration: 0.45)
+        // 2.5s deliberate hold — long enough that an accidental brush
+        // never opens Pomodoro, short enough that a committed press
+        // doesn't feel laggy. The success haptic confirms the gesture
+        // fired so the user can release without second-guessing.
+        LongPressGesture(minimumDuration: 2.5)
             .onEnded { _ in
                 guard let onLongPress else { return }
+                #if canImport(WatchKit)
+                WKInterfaceDevice.current().play(.start)
+                #endif
                 onLongPress(habit)
             }
     }

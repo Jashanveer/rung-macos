@@ -640,7 +640,18 @@ final class HabitBackendStore: ObservableObject {
         // sources — the dashboard snapshot and SSE `message.created` events —
         // each with their own ordering, so normalise on read for a stable
         // chat transcript.
-        return source.sorted { $0.createdAt < $1.createdAt }
+        let sorted = source.sorted { $0.createdAt < $1.createdAt }
+        // 24-hour visibility window — anything older drops out of the
+        // chat surface. Server retains the row so search / mentor
+        // history endpoints still see it; the UI just doesn't surface
+        // stale conversation. Messages without a parseable timestamp
+        // are kept (server is authoritative — drop only when we're
+        // certain the message is older than 24h).
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        return sorted.filter { msg in
+            guard let date = ChatMessageRow.parseISO(msg.createdAt) else { return true }
+            return date >= cutoff
+        }
     }
 
     // MARK: - Error handling

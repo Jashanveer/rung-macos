@@ -70,6 +70,16 @@ struct HabitMetrics {
     let levelNote: String
 
     static func compute(for habits: [Habit], todayKey: String) -> HabitMetrics {
+        // Apply the canonical filter once at the entry point so every
+        // derived metric — totalChecks, doneToday, weeklyConsistency,
+        // perfectDays, streaks — agrees regardless of which surface
+        // calls us. Some call sites (the watch snapshot builder, for
+        // example) historically passed the raw SwiftData query
+        // through; archived rows then leaked into totals on those
+        // surfaces but not on the dashboard, which is why the iPhone
+        // and macOS perfect-day counts could drift apart.
+        let habits = habits.filter(isVisibleForPerfectDay)
+
         // Weekly-target habits whose target is already met for the current
         // ISO week are treated as "done for the week" — they drop out of
         // today's active entry count so the progress ring doesn't punish
@@ -247,16 +257,38 @@ struct HabitMetrics {
         return best
     }
 
+    /// Canonical perfect-day computation. Applied identically on iOS,
+    /// iPadOS, macOS, and (via the iPhone-pushed snapshot) watchOS.
+    ///
+    /// Definition: a day is perfect when every habit/task that was
+    /// active on that date is satisfied. Satisfaction is per-entry —
+    /// a daily habit needs an explicit completion that day, while a
+    /// frequency-based habit (e.g. workout 5×/week) is also satisfied
+    /// on rest days that fall within the `7 - weeklyTarget` rest
+    /// budget for the ISO week (Monday-first). Tasks satisfy the
+    /// rule whether or not they have a due date or priority — those
+    /// fields drive UI surface only, never the perfect-day check.
+    ///
+    /// The heatmap (`dailyCompletionCounts`) is a separate metric
+    /// that counts raw completions per day; it doesn't share this
+    /// logic and isn't affected by changes here.
     static func perfectDayKeys(for habits: [Habit], todayKey: String = DateKey.key(for: Date())) -> [String] {
-        guard !habits.isEmpty else { return [] }
+        // Single canonical input filter — archived rows and pending
+        // deletions never gate a perfect day. Pushing this into the
+        // computation (rather than relying on every caller to filter
+        // the right way) keeps iPhone, iPad, macOS, and the watch
+        // snapshot in lockstep. Without it the watch builder's
+        // unfiltered list would silently disagree with the dashboard.
+        let visible = habits.filter(isVisibleForPerfectDay)
+        guard !visible.isEmpty else { return [] }
 
         // Any day that either carries at least one completion OR is covered
         // by a weekly-target habit's rest budget is eligible to be a
         // perfect day. Combining both avoids a subtle miss where the user
         // only logs gym days but still wants rest days in the same week to
         // count once the budget math checks out.
-        let completionDays = Set(habits.flatMap(\.completedDayKeys))
-        let restDays = habits
+        let completionDays = Set(visible.flatMap(\.completedDayKeys))
+        let restDays = visible
             .filter { $0.isFrequencyBased }
             .flatMap { habit -> [String] in
                 habit.completedDayKeys.flatMap { Habit.weekKeys(containing: DateKey.date(from: $0)) }
@@ -270,11 +302,22 @@ struct HabitMetrics {
                 // them perfect ahead of time lights up days the user
                 // hasn't earned. Cap at today (yyyy-MM-dd sorts lexically).
                 guard key <= todayKey else { return false }
-                let activeEntries = habits.filter { isEntryActive($0, on: key) }
+                let activeEntries = visible.filter { isEntryActive($0, on: key) }
                 guard !activeEntries.isEmpty else { return false }
                 return activeEntries.allSatisfy { $0.isSatisfied(on: key) }
             }
             .sorted()
+    }
+
+    /// True when an entry is eligible to gate a perfect day. Excludes
+    /// archived rows and rows the local store has marked for deletion
+    /// (the server hasn't acknowledged the delete yet, but the user
+    /// no longer sees them anywhere in the UI). Exposed `internal` so
+    /// `compute` can apply the same filter at the entry point.
+    static func isVisibleForPerfectDay(_ habit: Habit) -> Bool {
+        guard !habit.isArchived else { return false }
+        if habit.syncStatus == .deleted { return false }
+        return true
     }
 
     private static func isEntryActive(_ habit: Habit, on dayKey: String) -> Bool {

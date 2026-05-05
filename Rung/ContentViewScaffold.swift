@@ -218,6 +218,18 @@ struct ContentViewScaffold: View {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                                 calendarOpen = false
                             }
+                        },
+                        // Invalidate the 5s habits cache before the pull
+                        // so the calendar always sees the freshest server
+                        // state — without this, a sync that fired
+                        // moments earlier leaves a cached snapshot in
+                        // place and the calendar paints stale data even
+                        // though we triggered a refresh on open.
+                        onAppearSync: {
+                            Task {
+                                await backend.responseCache.invalidateHabits()
+                                await MainActor.run { onSync() }
+                            }
                         }
                     )
                     .frame(maxWidth: 980)

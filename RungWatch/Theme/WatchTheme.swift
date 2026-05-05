@@ -63,6 +63,10 @@ enum WatchTheme {
     static let cCyan       = Color(hex: 0x77B2DC)   // oklch(0.74 0.13 220)
     static let cMint       = Color(hex: 0x6FDDA8)   // oklch(0.78 0.14 160)
     static let cRose       = Color(hex: 0xEF7E89)   // oklch(0.72 0.18 15)
+    /// Cobalt / royal blue — used as the "rest" counterpart to cAmber's
+    /// "focus" warm. Lives on the same chroma band as the rest of the
+    /// palette so the break screen still reads as one app, just cooler.
+    static let cDeepBlue   = Color(hex: 0x4F76EA)   // oklch(0.62 0.18 262)
 
     // Semantic aliases — the rest of the watch code still talks in
     // accent / success / warning / danger / gold, so map those onto the
@@ -226,6 +230,7 @@ enum WatchWash {
     case mint     // Mentor — fresh chat surface
     case twilight // Account — violet→peach gradient, settings
     case amber    // Reserved for focus / pomodoro (long-press flow)
+    case deepBlue // Pomodoro break — cobalt rest mode counterpart to .amber
 }
 
 /// The actual wash view. Two stacked radial gradients (one warm corner,
@@ -260,6 +265,12 @@ struct WatchWashBackground: View {
             case .amber:
                 radial(WatchTheme.cAmber.opacity(0.55), at: .init(x: 0.5, y: -0.05), radius: 230)
                 radial(WatchTheme.cViolet.opacity(0.30), at: .init(x: 0.5, y: 1.05), radius: 220)
+            case .deepBlue:
+                // Top: deep cobalt dominant. Bottom: a softer cyan accent
+                // so the screen still has hue depth without going flat
+                // navy. Reads as the cool counterpart to .amber's warm.
+                radial(WatchTheme.cDeepBlue.opacity(0.65), at: .init(x: 0.5, y: -0.05), radius: 260)
+                radial(WatchTheme.cCyan.opacity(0.28), at: .init(x: 0.5, y: 1.05), radius: 220)
             }
         }
         .ignoresSafeArea()

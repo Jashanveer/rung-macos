@@ -59,6 +59,19 @@ struct CalendarSheet: View {
 
     let habits: [Habit]
     let onClose: () -> Void
+    /// Optional pull trigger called the first time the sheet appears
+    /// in this lifecycle. Wired by the parent to `syncWithBackend` so
+    /// each device flushes its outbox and pulls the latest habit
+    /// completions from the server before painting perfect-day dots.
+    /// Without this, two devices viewing the same account can show
+    /// different perfect-day sets purely because one of them hasn't
+    /// pulled yet — the underlying algorithm is identical, but the
+    /// local SwiftData store is the only thing each calendar reads.
+    var onAppearSync: (() -> Void)? = nil
+
+    /// Guards `onAppearSync` so opening / closing the sheet doesn't
+    /// retrigger a network call on every SwiftUI re-render.
+    @State private var didTriggerInitialSync = false
 
     @State private var displayMode: CalendarDisplayMode = .perfectDays
     /// Calendar vs. Energy view selector. Gated by `showEnergyView`
@@ -114,10 +127,17 @@ struct CalendarSheet: View {
     private var year: Int { Calendar.current.component(.year, from: Date()) }
 
     var body: some View {
-        if isCompact {
-            compactBody
-        } else {
-            regularBody
+        Group {
+            if isCompact {
+                compactBody
+            } else {
+                regularBody
+            }
+        }
+        .onAppear {
+            guard !didTriggerInitialSync else { return }
+            didTriggerInitialSync = true
+            onAppearSync?()
         }
     }
 
