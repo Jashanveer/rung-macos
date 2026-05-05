@@ -20,7 +20,14 @@ struct ContentView: View {
             // only renders for the first-ever cold launch when nothing
             // has ever been received, so a paired-but-unreachable phone
             // doesn't leave the watch staring at a stuck screen.
-            if session.hasReceivedRealData, !session.snapshot.account.handle.isEmpty {
+            // `hasReceivedRealData` now flips on any actionable payload
+            // — account handle from the iPhone-built snapshot OR
+            // habits/tasks from the standalone /api/habits +
+            // /api/tasks fetch. The redundant handle check is gone so
+            // a fresh watch sign-in releases the connecting screen
+            // the moment the primary lists land, not when iPhone
+            // catches up with its first /api/watch/snapshot upload.
+            if session.hasReceivedRealData {
                 tabs
             } else {
                 ConnectingView()

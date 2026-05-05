@@ -388,7 +388,17 @@ final class WatchSession: NSObject, ObservableObject {
             }
         }
         self.snapshot = snap
+        // We "have real data" as soon as anything actionable arrives.
+        // Account handle is the historic gate (it's empty in the
+        // .empty() placeholder), but on a fresh standalone watch
+        // sign-in the iPhone hasn't built a snapshot yet — only
+        // habits/tasks from the primary endpoints have landed. Letting
+        // those flip the gate too means the connecting screen
+        // releases the moment the user has *something* to do, not
+        // when iPhone catches up.
         self.hasReceivedRealData = !snap.account.handle.isEmpty
+            || !snap.pendingHabits.isEmpty
+            || !snap.completedHabits.isEmpty
         WatchSnapshotCache.save(snap)
     }
 

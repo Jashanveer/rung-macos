@@ -297,6 +297,17 @@ final class WatchConnectivityService: NSObject {
             }
         }
         for habit in activeEntries {
+            // Tasks completed on a previous day are sticky-done and
+            // shouldn't reappear in today's pending list. iOS's
+            // CenterPanel already filters via `habit.isTaskCompleted`;
+            // mirror that here so the watch sees the same Today list
+            // the iPhone shows (was: completed-yesterday tasks
+            // showing up as unchecked on the watch).
+            if habit.entryType == .task,
+               habit.isTaskCompleted,
+               !habit.completedDayKeys.contains(todayKey) {
+                continue
+            }
             let watchHabit = makeWatchHabit(from: habit, todayKey: todayKey)
             if watchHabit.isCompleted {
                 completed.append(watchHabit)
@@ -514,7 +525,19 @@ final class WatchConnectivityService: NSObject {
 
     private func makeWatchHabit(from habit: Habit, todayKey: String) -> WatchSnapshot.WatchHabit {
         let kind: WatchSnapshot.HabitKind = habit.isAutoVerified ? .healthKit : .manual
-        let isCompleted = habit.isSatisfied(on: todayKey)
+        // Habits use the per-day satisfaction logic (covers weekly
+        // rest budgets). Tasks are sticky — once `isTaskCompleted`
+        // flips it stays flipped, so `isSatisfied(on: today)` would
+        // wrongly read false for a task completed yesterday and the
+        // row would re-appear in pending. The caller already drops
+        // tasks completed on prior days, so this only fires for
+        // tasks completed today — same final state, simpler check.
+        let isCompleted: Bool = {
+            switch habit.entryType {
+            case .habit: return habit.isSatisfied(on: todayKey)
+            case .task:  return habit.isTaskCompleted
+            }
+        }()
 
         // Per-habit "Try 5:30 PM — peak after meetings" chip — same one
         // the iOS list shows. Pull from the AI advisor's cache when it

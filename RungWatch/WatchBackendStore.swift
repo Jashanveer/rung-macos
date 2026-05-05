@@ -202,8 +202,10 @@ final class WatchBackendStore: ObservableObject {
 
         var habits: [WatchBackendClient.BackendHabitRow] = []
         var tasks: [WatchBackendClient.BackendHabitRow] = []
-        do { habits = try await habitsResult } catch {}
-        do { tasks  = try await tasksResult  } catch {}
+        var habitsFetched = false
+        var tasksFetched = false
+        do { habits = try await habitsResult; habitsFetched = true } catch {}
+        do { tasks  = try await tasksResult;  tasksFetched  = true } catch {}
 
         // Merge — primary endpoints win for the habit/task list, the
         // iPhone-built snapshot wins for everything else. If the
@@ -223,17 +225,23 @@ final class WatchBackendStore: ObservableObject {
                 merged,
                 updatedAt: snapshotUpdatedAt
             )
-        } else if !habits.isEmpty || !tasks.isEmpty {
-            // Snapshot fetch failed but the primary lists succeeded —
-            // build a minimal snapshot from them. This is the
-            // standalone-without-iPhone case: a brand-new account
-            // has no `/api/watch/snapshot` payload yet but `/api/habits`
-            // already returns rows, so we can still paint Today.
+        } else if habitsFetched || tasksFetched {
+            // Snapshot fetch failed but at least one primary list
+            // returned 200. Treat this as "we reached the server, the
+            // user is authenticated" and release the connecting
+            // screen even if the lists themselves are empty (brand-new
+            // account, no habits added yet). A synthesized minimal
+            // account stamp is enough to flip `hasReceivedRealData`
+            // through the same path the iPhone snapshot would use.
+            var working = WatchSession.shared.snapshot
+            if working.account.handle.isEmpty {
+                working = withMinimalAccount(working)
+            }
             let merged = mergeSnapshot(
-                WatchSession.shared.snapshot,
+                working,
                 habits: habits,
                 tasks: tasks,
-                hasLivePrimary: true
+                hasLivePrimary: habitsFetched || tasksFetched
             )
             lastError = nil
             WatchSession.shared.acceptBackendSnapshot(merged, updatedAt: Date())
@@ -293,6 +301,20 @@ final class WatchBackendStore: ObservableObject {
             }
         }
         for row in tasks {
+            // Tasks are sticky — once any day has been ticked off the
+            // task is done forever (mirrors iOS's
+            // `Habit.isTaskCompleted = !completedDayKeys.isEmpty`).
+            // A task completed yesterday should NOT reappear today as
+            // pending the way habits do; it should drop out of the
+            // list entirely. We only keep:
+            //   • tasks that aren't done at all → goes to pending
+            //   • tasks completed today specifically → goes to
+            //     completed for the strikethrough flash
+            let anyChecked = row.checksByDate.contains { $0.value }
+            let checkedToday = row.checksByDate[todayKey] ?? false
+            if anyChecked && !checkedToday {
+                continue
+            }
             let watchRow = makeWatchHabit(
                 row, todayKey: todayKey, entryType: .task,
                 inheritFrom: snapshotById["b:\(row.id)"]
@@ -352,7 +374,16 @@ final class WatchBackendStore: ObservableObject {
         entryType: WatchSnapshot.EntryType,
         inheritFrom prior: WatchSnapshot.WatchHabit?
     ) -> WatchSnapshot.WatchHabit {
-        let isCompleted = row.checksByDate[todayKey] ?? false
+        // Habits are per-day; tasks are sticky once done. The caller
+        // (`mergeSnapshot`) already drops tasks completed on prior
+        // days, so for tasks reaching this branch `anyChecked` is
+        // either `checkedToday` or false — both safe to surface.
+        let isCompleted: Bool = {
+            switch entryType {
+            case .habit: return row.checksByDate[todayKey] ?? false
+            case .task:  return row.checksByDate.contains { $0.value }
+            }
+        }()
         let isHealthKit: Bool = {
             if let source = row.verificationSource {
                 return source.hasPrefix("healthKit") || source == "screenTimeSocial"
@@ -380,6 +411,37 @@ final class WatchBackendStore: ObservableObject {
             canonicalKey: row.canonicalKey,
             entryType: entryType,
             suggestionLabel: prior?.suggestionLabel
+        )
+    }
+
+    /// Synthesise a placeholder account stamp for the
+    /// signed-in-but-iPhone-hasn't-uploaded case. Picks the most
+    /// generic strings ("you" / "@you") so the UI doesn't render an
+    /// obviously-wrong real-looking name. The iPhone overrides this
+    /// the moment it pushes its first /api/watch/snapshot payload.
+    private func withMinimalAccount(_ snap: WatchSnapshot) -> WatchSnapshot {
+        let placeholder = WatchSnapshot.AccountInfo(
+            displayName: "you",
+            handle: "@you",
+            avatarInitial: "Y",
+            healthKitOn: false,
+            notificationsOn: true
+        )
+        return WatchSnapshot(
+            generatedAt: snap.generatedAt,
+            todayKey: snap.todayKey,
+            weekdayShort: snap.weekdayShort,
+            timeOfDay: snap.timeOfDay,
+            pendingHabits: snap.pendingHabits,
+            completedHabits: snap.completedHabits,
+            metrics: snap.metrics,
+            leaderboard: snap.leaderboard,
+            calendarHeatmap: snap.calendarHeatmap,
+            calendarMonthLabel: snap.calendarMonthLabel,
+            account: placeholder,
+            mentorMessages: snap.mentorMessages,
+            energy: snap.energy,
+            perfectDays: snap.perfectDays
         )
     }
 
