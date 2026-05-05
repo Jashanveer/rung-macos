@@ -78,13 +78,27 @@ struct CalendarSheet: View {
         #endif
     }
 
+    /// Habits-only slice — used for callers that need the count of
+    /// recurring habits specifically (e.g. the "out of N habits" copy
+    /// near the streak number). Tasks are excluded since they're
+    /// one-shot rather than recurring.
     private var streakHabits: [Habit] {
-        habits.filter { $0.entryType == .habit }
+        habits.filter { $0.entryType == .habit && !$0.isArchived }
+    }
+
+    /// Habits + tasks (un-archived) — the full set of entries that
+    /// must all be satisfied for a day to count as perfect. Was
+    /// previously habits-only, which let the user add a brand-new
+    /// uncompleted task today and still see today painted as a perfect
+    /// day; the heatmap intensity stayed the same too. Both bugs come
+    /// from the same filter.
+    private var streakEntries: [Habit] {
+        habits.filter { !$0.isArchived }
     }
 
     private var dailyCompletionCounts: [String: Int] {
         var counts: [String: Int] = [:]
-        for habit in streakHabits {
+        for habit in streakEntries {
             for dayKey in Set(habit.completedDayKeys) {
                 counts[dayKey, default: 0] += 1
             }
@@ -92,7 +106,7 @@ struct CalendarSheet: View {
         return counts
     }
     private var perfectDayKeys: Set<String> {
-        Set(HabitMetrics.perfectDayKeys(for: streakHabits))
+        Set(HabitMetrics.perfectDayKeys(for: streakEntries))
     }
     private var totalHabits: Int {
         streakHabits.count

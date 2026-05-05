@@ -11,10 +11,9 @@ struct HabitsTab: View {
     @EnvironmentObject private var session: WatchSession
     @Environment(\.watchFontScale) private var scale: Double
 
-    @State private var voiceSheetShown = false
-    @State private var voiceText: String = ""
-    /// Task currently being long-pressed — drives the action sheet so
-    /// the Pomodoro flow knows which entry to start. Nil = no sheet.
+    /// Task currently being long-pressed — drives the running Pomodoro
+    /// view directly (no intermediate menu, per user request). Nil =
+    /// no session in flight.
     @State private var pomodoroTarget: WatchSnapshot.WatchHabit? = nil
 
     private var snapshot: WatchSnapshot { session.snapshot }
@@ -27,59 +26,50 @@ struct HabitsTab: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            ScrollView {
-                VStack(spacing: 10) {
-                    WatchPageTitle("Today", accent: WatchTheme.cAmber)
-                    hero
-                    if let nextEntry {
-                        EntryRow(
-                            habit: nextEntry,
-                            style: .nextUp,
-                            scale: scale,
-                            onLongPress: pomodoroTarget(for: nextEntry)
-                        )
-                    } else if !snapshot.completedHabits.isEmpty {
-                        Text("All caught up")
-                            .font(WatchTheme.font(.body, scale: scale, weight: .medium))
-                            .foregroundStyle(WatchTheme.inkSoft)
-                            .padding(.top, 4)
-                    } else {
-                        Text("No habits yet.\nTap the mic to add one.")
-                            .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
-                            .foregroundStyle(WatchTheme.inkSoft)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 14)
-                            .padding(.top, 4)
-                    }
-
-                    if snapshot.pendingHabits.count > 1 || !snapshot.completedHabits.isEmpty {
-                        rest
-                            .padding(.top, 4)
-                    }
+        ScrollView {
+            VStack(spacing: 10) {
+                WatchPageTitle("Today", accent: WatchTheme.cAmber)
+                hero
+                if let nextEntry {
+                    EntryRow(
+                        habit: nextEntry,
+                        style: .nextUp,
+                        scale: scale,
+                        onLongPress: pomodoroTarget(for: nextEntry)
+                    )
+                } else if !snapshot.completedHabits.isEmpty {
+                    Text("All caught up")
+                        .font(WatchTheme.font(.body, scale: scale, weight: .medium))
+                        .foregroundStyle(WatchTheme.inkSoft)
+                        .padding(.top, 4)
+                } else {
+                    Text("No habits yet.\nSwipe up to Add.")
+                        .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
+                        .foregroundStyle(WatchTheme.inkSoft)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 14)
+                        .padding(.top, 4)
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
-                // Reserve room for the floating mic so the bottom row
-                // never sits under the tap target.
-                .padding(.bottom, 56)
-            }
 
-            voiceButton
-                .padding(.bottom, 12)
-                .padding(.trailing, 10)
+                if snapshot.pendingHabits.count > 1 || !snapshot.completedHabits.isEmpty {
+                    rest
+                        .padding(.top, 4)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 4)
+            .padding(.bottom, 12)
         }
         .watchWashBackground(.violet)
-        .sheet(isPresented: $voiceSheetShown) {
-            VoiceAddSheet(text: $voiceText) { final in
-                let trimmed = final.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-                session.createHabit(title: trimmed)
-                voiceText = ""
+        .fullScreenCover(item: $pomodoroTarget) { task in
+            // Long-press goes straight into the running Pomodoro
+            // view — no action sheet, no extra confirmation. The user
+            // already long-pressed; that IS their commitment.
+            NavigationStack {
+                PomodoroRunningView(habit: task) {
+                    pomodoroTarget = nil
+                }
             }
-        }
-        .sheet(item: $pomodoroTarget) { task in
-            PomodoroActionSheet(habit: task)
         }
     }
 
@@ -163,28 +153,6 @@ struct HabitsTab: View {
         }
     }
 
-    // MARK: - Voice button (floating, bigger tap target)
-
-    private var voiceButton: some View {
-        Button {
-            voiceText = ""
-            voiceSheetShown = true
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(WatchTheme.brandGradient)
-                Circle()
-                    .stroke(Color.white.opacity(0.35), lineWidth: 0.8)
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 17 * scale, weight: .heavy))
-                    .foregroundStyle(.white)
-                    .symbolEffect(.bounce, options: .speed(1.5), value: voiceSheetShown)
-            }
-            .frame(width: 42 * scale, height: 42 * scale)
-            .shadow(color: WatchTheme.cCyan.opacity(0.55), radius: 10, y: 3)
-        }
-        .buttonStyle(WatchPressStyle())
-    }
 }
 
 // MARK: - Unified entry row
@@ -400,64 +368,6 @@ private struct EntryRow: View {
                 guard let onLongPress else { return }
                 onLongPress(habit)
             }
-    }
-}
-
-// MARK: - Voice add-habit sheet
-
-private struct VoiceAddSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.watchFontScale) private var scale: Double
-    @Binding var text: String
-    var onSubmit: (String) -> Void
-
-    @State private var didSubmit: Bool = false
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text("New habit")
-                .font(WatchTheme.font(.caption, scale: scale, weight: .heavy))
-                .tracking(1.4)
-                .foregroundStyle(WatchTheme.inkSoft)
-            TextField("Speak or scribble", text: $text)
-                .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .submitLabel(.done)
-                .onSubmit {
-                    submitAndDismiss()
-                }
-            Button("Add") {
-                submitAndDismiss()
-            }
-            .font(WatchTheme.font(.body, scale: scale, weight: .bold))
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(WatchTheme.brandGradient)
-            )
-            .buttonStyle(WatchPressStyle())
-        }
-        .padding(12)
-        .watchWashNavigationBackground(.violet)
-        .onDisappear {
-            guard !didSubmit else { return }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            onSubmit(trimmed)
-        }
-    }
-
-    private func submitAndDismiss() {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            dismiss()
-            return
-        }
-        didSubmit = true
-        onSubmit(trimmed)
-        dismiss()
     }
 }
 

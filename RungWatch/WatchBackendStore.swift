@@ -88,6 +88,33 @@ final class WatchBackendStore: ObservableObject {
         await fetchOnce()
     }
 
+    /// PUT a single habit/task check straight to the backend, then
+    /// schedule a refresh so the watch picks up server-derived state
+    /// (XP, streak, leaderboard rank) the toggle just changed. This
+    /// is the durable channel for watch-side toggles — much more
+    /// reliable than the iPhone WC roundtrip, which silently drops
+    /// when the phone is unreachable.
+    func toggleCheck(
+        kind: WatchBackendClient.CheckKind,
+        backendID: Int64,
+        dayKey: String,
+        done: Bool
+    ) async {
+        do {
+            try await client.setCheck(
+                kind: kind,
+                backendID: backendID,
+                dayKey: dayKey,
+                done: done
+            )
+            scheduleRefresh(after: 0.4)
+        } catch let error as WatchBackendClient.Error {
+            lastError = error.localizedDescription
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     /// Schedule a refresh to fire `delay` seconds from now. Used after
     /// a watch-side toggle so the optimistic UI commits, then the
     /// server's authoritative snapshot back-fills any state the toggle

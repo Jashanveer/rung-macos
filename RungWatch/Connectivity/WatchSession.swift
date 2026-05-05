@@ -105,25 +105,54 @@ final class WatchSession: NSObject, ObservableObject {
     /// instant the user taps; the iPhone's re-broadcast confirms or corrects
     /// within a few hundred milliseconds when reachable.
     func toggleHabit(id: String) {
+        // Look up the row's pre-flip state so we can compute the target
+        // `done` flag and pick the correct backend path (habit vs task).
+        let allRows = snapshot.pendingHabits + snapshot.completedHabits
+        guard let row = allRows.first(where: { $0.id == id }) else { return }
+        let targetDone = !row.isCompleted
+        let kind: WatchBackendClient.CheckKind =
+            row.entryType == .task ? .task : .habit
+        let dayKey = snapshot.todayKey
+
         applyOptimistic(id: id, completing: nil)
+
+        // WC channel — fire-and-forget. Keeps iPhone's local SwiftData
+        // in step instantly when reachable, and stays harmless when not.
         send([
             WatchMessageKey.action: WatchMessageAction.toggleHabit,
             WatchMessageKey.habitId: id
         ])
-        // Server's authoritative view (XP, streak, leaderboard rank,
-        // perfect-day heatmap) lands a moment after the iPhone digests
-        // our message. Pull it down so the watch isn't stuck on the
-        // optimistic delta forever — particularly important when WC is
-        // unreachable and the toggle is being relayed through the
-        // backend rather than the phone.
-        WatchBackendStore.shared.scheduleRefresh(after: 1.2)
+
+        // Durable channel — POST straight to the backend so the change
+        // persists even when WC silently drops (the failure mode that
+        // was making watch-side toggles revert after the optimistic
+        // refresh tick). The server is authoritative; when this lands
+        // every other device picks the change up via SSE / poll.
+        if id.hasPrefix("b:"), let backendID = Int64(id.dropFirst(2)) {
+            Task { @MainActor in
+                await WatchBackendStore.shared.toggleCheck(
+                    kind: kind,
+                    backendID: backendID,
+                    dayKey: dayKey,
+                    done: targetDone
+                )
+            }
+        } else {
+            // Local-only entry (no backend ID assigned yet). WC is the
+            // only path; schedule a refresh so we pick up the assigned
+            // backend ID once iPhone syncs the new row upstream.
+            WatchBackendStore.shared.scheduleRefresh(after: 1.5)
+        }
     }
 
     /// Mutate `snapshot.pendingHabits` / `snapshot.completedHabits` to reflect
     /// a tap before the iPhone replies. `completing == true` forces "done",
     /// `false` forces "not done", `nil` flips whatever the row's current
     /// state is. Idempotent: matching by `id` means we never duplicate a row.
+    /// Also stamps `lastOptimisticChangeAt` so the next backend payload
+    /// older than this moment can't silently undo the user's tap.
     private func applyOptimistic(id: String, completing: Bool?) {
+        markOptimisticChange()
         var snap = snapshot
         let allRows = snap.pendingHabits + snap.completedHabits
         guard let row = allRows.first(where: { $0.id == id }) else { return }
@@ -268,6 +297,21 @@ final class WatchSession: NSObject, ObservableObject {
 
     // MARK: - Snapshot ingestion
 
+    /// Bumped whenever the user toggles or creates an entry on the
+    /// watch. `acceptBackendSnapshot` honours this — a backend payload
+    /// is only allowed to replace the live snapshot when its
+    /// `generatedAt` is strictly newer than this stamp, so a polling
+    /// fetch that races a fresh tap can't revert what the user just
+    /// committed.
+    private var lastOptimisticChangeAt: Date?
+
+    /// Mark that the watch just applied an optimistic mutation. Any
+    /// backend snapshot generated before this instant is treated as
+    /// stale (it pre-dates the user's tap) and gets dropped.
+    fileprivate func markOptimisticChange() {
+        lastOptimisticChangeAt = Date()
+    }
+
     /// Wipe the in-memory snapshot and flip `hasReceivedRealData` back
     /// off so the root view falls into the connecting / sign-in screen
     /// the next render. Paired with `WatchAuthStore.clear()` +
@@ -305,6 +349,14 @@ final class WatchSession: NSObject, ObservableObject {
         // stale server response that hadn't picked the change up yet.
         if snap.generatedAt < self.snapshot.generatedAt
             && self.hasReceivedRealData {
+            return
+        }
+        // Optimistic guard: if the user just toggled or created
+        // something on the watch, any backend payload generated before
+        // that tap is by definition stale — it can't have seen the
+        // change yet. Dropping it prevents the "tap → momentary check
+        // → silent revert" footgun the previous version had.
+        if let stamp = lastOptimisticChangeAt, snap.generatedAt < stamp {
             return
         }
         self.snapshot = snap

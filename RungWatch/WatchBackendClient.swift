@@ -255,6 +255,94 @@ struct WatchBackendClient {
         let displayName: String?
     }
 
+    // MARK: - Habit / task toggle (direct from watch to backend)
+
+    /// PUT `/api/habits/{id}/checks/{dayKey}` or its `/api/tasks/...`
+    /// counterpart, identical contract to the iPhone's `setCheck`. The
+    /// watch has its own auth token, so this call goes straight to the
+    /// server — no iPhone WC roundtrip — which fixes the case where a
+    /// flaky WC channel made watch-side toggles silently revert when
+    /// the iPhone never received the message.
+    ///
+    /// `kind` chooses the path so habits and tasks land in the right
+    /// SwiftData bucket on every other device after the SSE / poll
+    /// fan-out.
+    enum CheckKind { case habit, task }
+
+    func setCheck(
+        kind: CheckKind,
+        backendID: Int64,
+        dayKey: String,
+        done: Bool
+    ) async throws {
+        // Pre-emptive refresh in case the access token is on the cusp
+        // of expiring — same path the snapshot fetch uses.
+        await preemptivelyRefreshIfStale()
+        do {
+            try await performSetCheck(
+                kind: kind, backendID: backendID, dayKey: dayKey, done: done
+            )
+        } catch Error.unauthorized {
+            try await refreshAccessToken()
+            try await performSetCheck(
+                kind: kind, backendID: backendID, dayKey: dayKey, done: done
+            )
+        }
+    }
+
+    private func performSetCheck(
+        kind: CheckKind,
+        backendID: Int64,
+        dayKey: String,
+        done: Bool
+    ) async throws {
+        guard let token = WatchAuthStore.shared.current()?.accessToken else {
+            throw Error.noToken
+        }
+        let path: String
+        switch kind {
+        case .habit: path = "api/habits/\(backendID)/checks/\(dayKey)"
+        case .task:  path = "api/tasks/\(backendID)/checks/\(dayKey)"
+        }
+        var request = URLRequest(url: Self.baseURL.appendingPathComponent(path))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let body = CheckUpdateRequest(
+            done: done,
+            verificationTier: "selfReport",
+            verificationSource: "selfReport",
+            durationSeconds: nil
+        )
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let response: URLResponse
+        do {
+            (_, response) = try await session.data(for: request)
+        } catch {
+            throw Error.transport(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw Error.http(-1)
+        }
+        switch http.statusCode {
+        case 200..<300:
+            return
+        case 401, 403:
+            throw Error.unauthorized
+        default:
+            throw Error.http(http.statusCode)
+        }
+    }
+
+    private struct CheckUpdateRequest: Encodable {
+        let done: Bool
+        let verificationTier: String?
+        let verificationSource: String?
+        let durationSeconds: Int?
+    }
+
     /// Decoded backend response — mirror of `BackendAuthTokens` on iOS.
     struct AuthResult: Decodable {
         let accessToken: String

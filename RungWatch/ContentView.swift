@@ -37,18 +37,23 @@ struct ContentView: View {
                 HabitsTab()
             }
             .tag(0)
-            CalendarTab()
+            // Add tab — second from the top so users find it on the
+            // first crown turn. Tiny floating mic was hard to tap (per
+            // user feedback); this is a full surface with a big mic.
+            AddEntryView()
                 .tag(1)
-            EnergyTab()
+            CalendarTab()
                 .tag(2)
-            StatsTab()
+            EnergyTab()
                 .tag(3)
-            FriendsTab()
+            StatsTab()
                 .tag(4)
-            MentorTab()
+            FriendsTab()
                 .tag(5)
-            AccountTab()
+            MentorTab()
                 .tag(6)
+            AccountTab()
+                .tag(7)
         }
         .tabViewStyle(.verticalPage)
         .background(Color(hex: 0x06070B).ignoresSafeArea())
