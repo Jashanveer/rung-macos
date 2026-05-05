@@ -47,14 +47,20 @@ struct PomodoroRunningView: View {
     private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        ZStack {
-            // Breathing analog ring fills most of the watch face.
+        // Stack ring above the puck — explicit vertical layout means
+        // the ring's size is governed by the available width, not by
+        // a GeometryReader that subtracts an arbitrary 50pt for the
+        // puck (which made the ring collapse to ~120pt on the small
+        // 41mm face and clipped the timer to "2…").
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
             ringHero
+            Spacer(minLength: 0)
             controlPuck
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
         .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onReceive(timer) { _ in
             tick &+= 1
             if remainingSeconds <= 0 && !didFinish {
@@ -62,8 +68,6 @@ struct PomodoroRunningView: View {
                 #if canImport(WatchKit)
                 WKInterfaceDevice.current().play(.success)
                 #endif
-                // Tap the underlying habit done — Pomodoro completion
-                // is the user's actionable commitment for this entry.
                 if !habit.isCompleted {
                     session.toggleHabit(id: habit.id)
                 }
@@ -76,115 +80,127 @@ struct PomodoroRunningView: View {
             }
         }
         .watchWashNavigationBackground(.amber)
-        .navigationTitle("Focus")
+        // No `navigationTitle` — the inline status bar already prints
+        // "Focus" at the top and an extra system title pushed the
+        // hero down so the ring shrank below readable size.
+        .toolbar(.hidden, for: .automatic)
     }
 
     // MARK: - Hero ring
 
     private var ringHero: some View {
-        GeometryReader { geo in
-            let ringSize = min(geo.size.width, geo.size.height - 50)
-            let radius = (ringSize - 10) / 2
-            ZStack {
-                Circle()
-                    .stroke(Color.white.opacity(0.10), lineWidth: 6)
-                Circle()
-                    .trim(from: 0, to: progressFraction)
-                    .stroke(
-                        LinearGradient(
-                            colors: [WatchTheme.cPeach, WatchTheme.cAmber, WatchTheme.cRose],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        style: StrokeStyle(lineWidth: 6, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(-90))
-                    .shadow(color: WatchTheme.cAmber.opacity(0.55), radius: 6)
-                    .animation(WatchMotion.smooth, value: progressFraction)
+        // Square + aspect-ratio frame keeps the ring round at any
+        // available width (the parent VStack hands us a width-bounded
+        // slot). No GeometryReader needed.
+        ZStack {
+            // Track + progress + tick marks live in their own
+            // breathing-scaled GeometryReader so the tick offsets
+            // know the actual radius without us recomputing it.
+            GeometryReader { geo in
+                let radius = (min(geo.size.width, geo.size.height) - 6) / 2
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.10), lineWidth: 6)
+                    Circle()
+                        .trim(from: 0, to: progressFraction)
+                        .stroke(
+                            LinearGradient(
+                                colors: [WatchTheme.cPeach, WatchTheme.cAmber, WatchTheme.cRose],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .shadow(color: WatchTheme.cAmber.opacity(0.55), radius: 6)
+                        .animation(WatchMotion.smooth, value: progressFraction)
 
-                // Tick marks every 5 minutes — 12 ticks total like the
-                // hour markers on an analog watch dial.
-                ForEach(0..<12) { i in
-                    let isMajor = i % 3 == 0
-                    Capsule()
-                        .fill(Color.white.opacity(isMajor ? 0.4 : 0.18))
-                        .frame(width: 1.2, height: isMajor ? 7 : 4)
-                        .offset(y: -radius - 2)
-                        .rotationEffect(.degrees(Double(i) * 30))
-                }
-
-                VStack(spacing: 2) {
-                    Text(isPaused ? "PAUSED" : "FOCUS")
-                        .font(.system(size: 8 * scale, weight: .heavy, design: .rounded))
-                        .tracking(2.0)
-                        .foregroundStyle(WatchTheme.cAmber)
-                    Text(timeLabel)
-                        .font(.system(size: 32 * scale, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(WatchTheme.ink)
-                    Text(habit.title)
-                        .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
-                        .tracking(1.0)
-                        .foregroundStyle(WatchTheme.inkSoft)
-                        .lineLimit(1)
-                        .padding(.horizontal, 8)
+                    // 12 hour-style tick marks (5-min divisions). The
+                    // offset puts each tick on the ring's perimeter.
+                    ForEach(0..<12) { i in
+                        let isMajor = i % 3 == 0
+                        Capsule()
+                            .fill(Color.white.opacity(isMajor ? 0.4 : 0.18))
+                            .frame(width: 1.2, height: isMajor ? 7 : 4)
+                            .offset(y: -radius - 2)
+                            .rotationEffect(.degrees(Double(i) * 30))
+                    }
                 }
             }
-            .frame(width: ringSize, height: ringSize)
-            .frame(maxWidth: .infinity)
-            .scaleEffect(isPaused ? 1.0 : breatheScale)
-            .animation(.easeInOut(duration: 4).repeatForever(autoreverses: true), value: tick / 8)
+
+            // Center stack — small caps + monospaced timer + task
+            // title. Caps tracking pulled in to keep "FOCUS" tight,
+            // timer uses a smaller 24pt so even "24:25" fits inside
+            // the smaller 41mm ring without truncating to "2…".
+            VStack(spacing: 1) {
+                Text(isPaused ? "PAUSED" : "FOCUS")
+                    .font(.system(size: 9 * scale, weight: .heavy, design: .rounded))
+                    .tracking(1.6)
+                    .foregroundStyle(WatchTheme.cAmber)
+                Text(timeLabel)
+                    .font(.system(size: 24 * scale, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(WatchTheme.ink)
+                    .minimumScaleFactor(0.8)
+                    .lineLimit(1)
+                Text(habit.title)
+                    .font(.system(size: 9 * scale, weight: .semibold, design: .rounded))
+                    .foregroundStyle(WatchTheme.inkSoft)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 18)
+            }
         }
-        .padding(.bottom, 38)
+        .aspectRatio(1, contentMode: .fit)
+        .padding(.horizontal, 4)
+        .scaleEffect(isPaused ? 1.0 : breatheScale)
+        .animation(.easeInOut(duration: 4).repeatForever(autoreverses: true), value: tick / 8)
     }
 
     // MARK: - Controls
 
     private var controlPuck: some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 10) {
-                Button {
-                    #if canImport(WatchKit)
-                    WKInterfaceDevice.current().play(.click)
-                    #endif
-                    if isPaused {
-                        startedAt = Date()
-                        isPaused = false
-                    } else {
-                        pausedElapsed = elapsedSeconds
-                        isPaused = true
-                    }
-                } label: {
-                    Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                        .font(.system(size: 14, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .liquidGlassSurface(
-                            cornerRadius: 999,
-                            tint: WatchTheme.cAmber,
-                            strong: true
-                        )
+        HStack(spacing: 10) {
+            Button {
+                #if canImport(WatchKit)
+                WKInterfaceDevice.current().play(.click)
+                #endif
+                if isPaused {
+                    startedAt = Date()
+                    isPaused = false
+                } else {
+                    pausedElapsed = elapsedSeconds
+                    isPaused = true
                 }
-                .buttonStyle(WatchPressStyle())
-
-                Button {
-                    totalSeconds += 5 * 60
-                    #if canImport(WatchKit)
-                    WKInterfaceDevice.current().play(.success)
-                    #endif
-                } label: {
-                    Text("+5")
-                        .font(WatchTheme.font(.caption, scale: scale, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                        .liquidGlassSurface(cornerRadius: 999)
-                }
-                .buttonStyle(WatchPressStyle())
+            } label: {
+                Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 14, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .liquidGlassSurface(
+                        cornerRadius: 999,
+                        tint: WatchTheme.cAmber,
+                        strong: true
+                    )
             }
-            .padding(.bottom, 4)
+            .buttonStyle(WatchPressStyle())
+
+            Button {
+                totalSeconds += 5 * 60
+                #if canImport(WatchKit)
+                WKInterfaceDevice.current().play(.success)
+                #endif
+            } label: {
+                Text("+5")
+                    .font(WatchTheme.font(.caption, scale: scale, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 36)
+                    .liquidGlassSurface(cornerRadius: 999)
+            }
+            .buttonStyle(WatchPressStyle())
         }
+        .padding(.top, 6)
     }
 
     // MARK: - Maths
