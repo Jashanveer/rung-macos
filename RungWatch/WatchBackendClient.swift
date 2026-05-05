@@ -343,6 +343,75 @@ struct WatchBackendClient {
         let durationSeconds: Int?
     }
 
+    // MARK: - Create task (direct from watch to backend)
+
+    /// POST `/api/tasks` with the given title. The watch's "Add" screen
+    /// dictates / scribbles a title and we want it to land on iPhone +
+    /// Mac + iPad even when the WC channel is dead — that's the same
+    /// failure mode that was making toggles silently revert. Returns
+    /// the new task's backend id; callers schedule a snapshot refresh
+    /// shortly after so the freshly-created task appears in the watch's
+    /// own pending list without waiting for the next poll tick.
+    func createTask(title: String) async throws -> Int64 {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw Error.http(400)
+        }
+        await preemptivelyRefreshIfStale()
+        do {
+            return try await performCreateTask(title: trimmed)
+        } catch Error.unauthorized {
+            try await refreshAccessToken()
+            return try await performCreateTask(title: trimmed)
+        }
+    }
+
+    private func performCreateTask(title: String) async throws -> Int64 {
+        guard let token = WatchAuthStore.shared.current()?.accessToken else {
+            throw Error.noToken
+        }
+        var request = URLRequest(url: Self.baseURL.appendingPathComponent("api/tasks"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(TaskCreateRequest(title: title))
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw Error.transport(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw Error.http(-1)
+        }
+        switch http.statusCode {
+        case 200..<300:
+            do {
+                let created = try decoder.decode(TaskCreateResponse.self, from: data)
+                return created.id
+            } catch {
+                throw Error.decode(error)
+            }
+        case 401, 403:
+            throw Error.unauthorized
+        default:
+            throw Error.http(http.statusCode)
+        }
+    }
+
+    private struct TaskCreateRequest: Encodable {
+        let title: String
+    }
+
+    /// Minimal projection of `BackendHabit` — we only need the new id,
+    /// everything else flows in via the next snapshot refresh.
+    private struct TaskCreateResponse: Decodable {
+        let id: Int64
+    }
+
     /// Decoded backend response — mirror of `BackendAuthTokens` on iOS.
     struct AuthResult: Decodable {
         let accessToken: String

@@ -385,7 +385,13 @@ final class WatchConnectivityService: NSObject {
             calendarMonthLabel: monthLabel,
             account: account,
             mentorMessages: makeMentorMessages(now: now),
-            energy: makeEnergy(now: now)
+            energy: makeEnergy(now: now),
+            // Ship the iPhone's authoritative perfect-day set so the
+            // watch can paint the same green dots without re-running
+            // the two-process logic. Includes both habits and tasks —
+            // adding a new uncompleted task today drops today out of
+            // this set, which the watch reflects on its next render.
+            perfectDays: metrics.perfectDays
         )
     }
 

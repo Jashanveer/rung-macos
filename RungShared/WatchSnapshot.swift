@@ -233,6 +233,12 @@ struct WatchSnapshot: Codable, Equatable {
     let leaderboard: [WatchLeaderboardEntry]
     let calendarHeatmap: [String: Double]   // yyyy-MM-dd → 0...1 completion intensity
     let calendarMonthLabel: String          // "APR" / "MAY" — top-right of the calendar tab
+    /// Perfect-day keys (yyyy-MM-dd) — set by the iPhone using
+    /// `HabitMetrics.perfectDayKeys` over both habits and tasks so the
+    /// watch's calendar grid mirrors the iOS / macOS perfect-day logic
+    /// exactly (adding a new uncompleted task today drops today out).
+    /// Optional for forward-compat — older iOS builds didn't ship it.
+    let perfectDays: [String]?
     let account: AccountInfo
     /// Optional so the iPhone can keep broadcasting the legacy snapshot shape
     /// during rollout; the watch falls back to an empty list in that case.
@@ -244,7 +250,7 @@ struct WatchSnapshot: Codable, Equatable {
         case generatedAt, todayKey, weekdayShort, timeOfDay
         case pendingHabits, completedHabits, metrics
         case leaderboard, calendarHeatmap, calendarMonthLabel
-        case account, mentorMessages, energy
+        case account, mentorMessages, energy, perfectDays
     }
 
     init(from decoder: Decoder) throws {
@@ -262,6 +268,7 @@ struct WatchSnapshot: Codable, Equatable {
         self.account = try c.decode(AccountInfo.self, forKey: .account)
         self.mentorMessages = try c.decodeIfPresent([WatchMentorMessage].self, forKey: .mentorMessages)
         self.energy = try c.decodeIfPresent(WatchEnergy.self, forKey: .energy)
+        self.perfectDays = try c.decodeIfPresent([String].self, forKey: .perfectDays)
     }
 
     init(
@@ -277,7 +284,8 @@ struct WatchSnapshot: Codable, Equatable {
         calendarMonthLabel: String,
         account: AccountInfo,
         mentorMessages: [WatchMentorMessage]?,
-        energy: WatchEnergy? = nil
+        energy: WatchEnergy? = nil,
+        perfectDays: [String]? = nil
     ) {
         self.generatedAt = generatedAt
         self.todayKey = todayKey
@@ -292,6 +300,7 @@ struct WatchSnapshot: Codable, Equatable {
         self.account = account
         self.mentorMessages = mentorMessages
         self.energy = energy
+        self.perfectDays = perfectDays
     }
 
     // MARK: Empty / placeholder
@@ -331,7 +340,8 @@ struct WatchSnapshot: Codable, Equatable {
                 notificationsOn: false
             ),
             mentorMessages: nil,
-            energy: nil
+            energy: nil,
+            perfectDays: nil
         )
     }
 

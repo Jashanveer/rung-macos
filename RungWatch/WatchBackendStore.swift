@@ -88,6 +88,26 @@ final class WatchBackendStore: ObservableObject {
         await fetchOnce()
     }
 
+    /// POST a new task straight to the backend so the row exists on
+    /// the server immediately — no dependency on the iPhone WC roundtrip.
+    /// Returns true when the create succeeded so the caller can decide
+    /// whether to dismiss the Add screen or surface an error. On
+    /// success we schedule a snapshot refresh so the new task lands in
+    /// the watch's pending list within a second.
+    func createTask(title: String) async -> Bool {
+        do {
+            _ = try await client.createTask(title: title)
+            scheduleRefresh(after: 0.5)
+            return true
+        } catch let error as WatchBackendClient.Error {
+            lastError = error.localizedDescription
+            return false
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
     /// PUT a single habit/task check straight to the backend, then
     /// schedule a refresh so the watch picks up server-derived state
     /// (XP, streak, leaderboard rank) the toggle just changed. This

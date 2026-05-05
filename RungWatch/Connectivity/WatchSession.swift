@@ -243,15 +243,24 @@ final class WatchSession: NSObject, ObservableObject {
     func createHabit(title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // WC channel — fire-and-forget for instant iPhone-side parity
+        // when reachable. Used to be the only channel, which meant a
+        // dead WC link silently dropped every Add tap on the watch.
         send([
             WatchMessageKey.action: WatchMessageAction.createHabit,
             WatchMessageKey.title: trimmed
         ])
-        // Server reconciles the new row into the snapshot once the
-        // iPhone-side SwiftData insert + push completes; we re-fetch
-        // shortly after so the user sees the freshly-added habit
-        // appear in the list without waiting on the next poll tick.
-        WatchBackendStore.shared.scheduleRefresh(after: 1.5)
+        // Durable channel — POST `/api/tasks` directly so the new task
+        // lands on the server even when WC is unreachable. The
+        // backend's SSE / poll fan-out then propagates the row to
+        // iPhone, Mac, and iPad. Mark an optimistic stamp so the next
+        // backend snapshot whose `generatedAt` predates this call gets
+        // ignored (the polling fetch can't undo what the user just
+        // committed).
+        markOptimisticChange()
+        Task { @MainActor in
+            _ = await WatchBackendStore.shared.createTask(title: trimmed)
+        }
     }
 
     private func send(_ payload: [String: Any]) {

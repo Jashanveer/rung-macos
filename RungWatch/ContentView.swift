@@ -80,16 +80,11 @@ private struct ConnectingView: View {
 
     @State private var signInError: String? = nil
     @State private var isSigningIn: Bool = false
-    /// Bumped on each Retry tap so the underlying `SignInWithAppleButton`
-    /// gets a fresh SwiftUI identity. Without this, watchOS occasionally
-    /// holds onto the previous `ASAuthorizationController`'s completed
-    /// state and the next tap silently no-ops.
+    /// Bumped on each fresh-launch / sign-in attempt so the underlying
+    /// `SignInWithAppleButton` gets a new SwiftUI identity. watchOS
+    /// occasionally holds onto a previous `ASAuthorizationController`'s
+    /// completed state, which silently no-ops the next tap.
     @State private var appleButtonResetCount: Int = 0
-    /// Strong reference to the in-flight `ASAuthorizationController`
-    /// triggered programmatically by the Retry button. The coordinator
-    /// must outlive `performRequests()` or the system drops the callback
-    /// without ever calling our completion handler.
-    @State private var pendingAppleCoordinator: AppleSignInCoordinator? = nil
     /// Drives the entrance animation — flipped to true a few frames
     /// after onAppear so the hero spring-scales into place. Without
     /// this the screen pops in flat and feels cheap.
@@ -135,14 +130,11 @@ private struct ConnectingView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 2)
                 }
-
-                // Retry: when the watch has no token yet, this re-runs
-                // Apple sign-in directly so the user doesn't have to hunt
-                // for the SignInWithApple button after a failure. Once
-                // signed in, it falls back to the WC + backend refresh
-                // dual-channel snapshot fetch.
-                retryButton
-                diagnosticBlock
+                // The Sign-in-with-Apple button + headline status are
+                // the only controls the user needs here. Retry / WC
+                // diagnostic block were removed once the watch became
+                // a standalone backend client — neither was actionable
+                // for end users and they cluttered the cold-launch.
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
@@ -191,31 +183,6 @@ private struct ConnectingView: View {
         // doesn't hit a watchOS-stale `ASAuthorizationController`.
         .id(appleButtonResetCount)
         .padding(.top, 6)
-    }
-
-    /// Fires Apple's authorization controller programmatically — used by
-    /// the Retry button so a single tap does what the user expects:
-    /// re-prompt for Apple sign-in. Also drives the same downstream
-    /// success/failure mapping `handleAppleSignIn` runs for the
-    /// SignInWithAppleButton path.
-    private func triggerAppleSignInProgrammatically() {
-        guard !isSigningIn else { return }
-        signInError = nil
-        let coordinator = AppleSignInCoordinator { result in
-            Task { @MainActor in
-                handleAppleSignIn(result)
-                pendingAppleCoordinator = nil
-            }
-        }
-        pendingAppleCoordinator = coordinator
-        let provider = ASAuthorizationAppleIDProvider()
-        let request = provider.createRequest()
-        request.requestedScopes = [.fullName, .email]
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate = coordinator
-        // `presentationContextProvider` is unavailable on watchOS — the
-        // system hosts the authorization sheet in the active scene.
-        controller.performRequests()
     }
 
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
@@ -293,154 +260,26 @@ private struct ConnectingView: View {
         }
     }
 
+    /// One-line copy under "Set up Rung" — describes what the user
+    /// should do next. WC reachability isn't surfaced here anymore;
+    /// the watch is a standalone backend client and a flaky WC link
+    /// no longer blocks sync.
     private var headlineStatus: String {
-        // Backend channel is the primary path now. If we have a token,
-        // surface the network status; otherwise fall back to WC copy.
         if WatchAuthStore.shared.current() == nil {
-            return "Open Rung on iPhone once to set up sync"
+            return "Sign in with Apple to start syncing"
         }
         if backend.isFetching {
-            return "Syncing from backend…"
+            return "Syncing…"
         }
         if let err = backend.lastError {
             return err
         }
-        if !session.diagnostic.isCompanionAppInstalled {
-            return "Backend OK · iPhone Rung not detected"
-        }
-        if session.isReachable {
-            return "Paired · waiting for data"
-        }
-        return "Backend offline · trying again"
+        return "Connecting to Rung"
     }
 
     private var headlineColor: Color {
         if backend.lastError == nil { return WatchTheme.inkSoft }
         return WatchTheme.warning
-    }
-
-    /// True while the watch hasn't completed Apple sign-in. The Retry
-    /// button retargets here: instead of pinging the WC channel (which
-    /// can't help when there's no token), it re-runs Apple sign-in.
-    private var hasNoAuthToken: Bool {
-        WatchAuthStore.shared.current() == nil
-    }
-
-    private var retryButton: some View {
-        Button {
-            if hasNoAuthToken {
-                // No session yet — the only thing that can unblock the
-                // user is re-running Apple sign-in. Re-arm the system
-                // button's identity in case watchOS cached its state,
-                // then fire the auth controller directly so a single
-                // Retry tap does what the user expects.
-                appleButtonResetCount &+= 1
-                triggerAppleSignInProgrammatically()
-                return
-            }
-            // Already signed in — race the WC channel + backend channel.
-            // The user's tap is registered immediately on the WC
-            // counter; backend retry runs in the background.
-            session.requestSnapshot()
-            Task { await backend.refreshNow() }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: hasNoAuthToken ? "arrow.clockwise.circle" : "arrow.clockwise")
-                    .symbolEffect(.rotate, value: session.retryCount)
-                Text(retryButtonLabel)
-                    .contentTransition(.numericText())
-                    .animation(WatchMotion.micro, value: session.retryCount)
-            }
-            .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(WatchTheme.brandGradient)
-            )
-        }
-        .buttonStyle(WatchPressStyle())
-        .disabled(isSigningIn)
-        .opacity(isSigningIn ? 0.6 : 1)
-        .animation(WatchMotion.snappy, value: isSigningIn)
-        .padding(.top, 4)
-    }
-
-    private var retryButtonLabel: String {
-        if hasNoAuthToken {
-            return signInError == nil ? "Try sign-in again" : "Retry sign-in"
-        }
-        return session.retryCount == 0 ? "Retry" : "Retry · \(session.retryCount)"
-    }
-
-    private var diagnosticBlock: some View {
-        VStack(spacing: 2) {
-            row(label: "STATE", value: session.diagnostic.activationState,
-                ok: session.diagnostic.activationState == "activated")
-            row(label: "REACH", value: session.isReachable ? "yes" : "no",
-                ok: session.isReachable)
-            row(label: "PAIR",  value: session.diagnostic.isCompanionAppInstalled ? "yes" : "no",
-                ok: session.diagnostic.isCompanionAppInstalled)
-            if let err = session.lastSendError {
-                Text(err)
-                    .font(WatchTheme.font(.label, scale: scale, weight: .regular))
-                    .foregroundStyle(WatchTheme.danger)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 2)
-            }
-        }
-        .padding(.top, 6)
-    }
-
-    private func row(label: String, value: String, ok: Bool) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(WatchTheme.font(.label, scale: scale, weight: .heavy))
-                .tracking(0.8)
-                .foregroundStyle(WatchTheme.inkSoft)
-                .frame(width: 36, alignment: .leading)
-            Text(value)
-                .font(WatchTheme.font(.label, scale: scale, weight: .semibold, design: .monospaced))
-                .foregroundStyle(ok ? WatchTheme.success : WatchTheme.warning)
-            Spacer()
-        }
-    }
-}
-
-// MARK: - Apple sign-in coordinator
-
-/// Bridges `ASAuthorizationController` to a Swift closure callback so the
-/// Retry button can fire Apple sign-in programmatically (the SwiftUI
-/// `SignInWithAppleButton` only triggers on a direct tap of itself). The
-/// owning view holds a strong reference until the system delivers either
-/// `didCompleteWithAuthorization` or `didCompleteWithError` — releasing
-/// the coordinator before that point silently drops the callback.
-///
-/// `ASAuthorizationControllerPresentationContextProviding` is unavailable
-/// on watchOS, so we omit it; the system auto-hosts the authorization
-/// sheet in the active scene without one.
-private final class AppleSignInCoordinator: NSObject,
-    ASAuthorizationControllerDelegate {
-
-    private let completion: (Result<ASAuthorization, Error>) -> Void
-
-    init(completion: @escaping (Result<ASAuthorization, Error>) -> Void) {
-        self.completion = completion
-    }
-
-    func authorizationController(
-        controller: ASAuthorizationController,
-        didCompleteWithAuthorization authorization: ASAuthorization
-    ) {
-        completion(.success(authorization))
-    }
-
-    func authorizationController(
-        controller: ASAuthorizationController,
-        didCompleteWithError error: Error
-    ) {
-        completion(.failure(error))
     }
 }
 

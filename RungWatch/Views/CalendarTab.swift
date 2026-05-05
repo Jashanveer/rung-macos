@@ -82,8 +82,23 @@ struct CalendarTab: View {
 
     // MARK: - Month grid
 
+    /// Authoritative perfect-day set, sourced from the iPhone's
+    /// `HabitMetrics.perfectDayKeys` so the watch's green dots agree
+    /// with iOS / iPad / macOS exactly. Falls back to a heuristic
+    /// (heatmap intensity == 1.0) when an older iOS build hasn't
+    /// shipped the explicit array yet.
+    private var perfectDaySet: Set<String> {
+        if let keys = snapshot.perfectDays {
+            return Set(keys)
+        }
+        return Set(snapshot.calendarHeatmap.compactMap { key, intensity in
+            intensity >= 0.999 ? key : nil
+        })
+    }
+
     private var monthGrid: some View {
         let layout = MonthGridLayout(referenceDate: Date(), todayKey: snapshot.todayKey)
+        let perfect = perfectDaySet
         return VStack(alignment: .leading, spacing: 4) {
             // Month name + weekday header
             HStack(alignment: .firstTextBaseline) {
@@ -113,6 +128,7 @@ struct CalendarTab: View {
                             DayDot(
                                 cell: cell,
                                 intensity: cell.dayKey.map { snapshot.calendarHeatmap[$0] ?? 0 } ?? 0,
+                                isPerfect: cell.dayKey.map { perfect.contains($0) } ?? false,
                                 heatmap: heatmapMode
                             )
                             .frame(maxWidth: .infinity)
@@ -160,6 +176,7 @@ struct CalendarTab: View {
 private struct DayDot: View {
     let cell: MonthGridLayout.Cell
     let intensity: Double
+    let isPerfect: Bool
     let heatmap: Bool
 
     var body: some View {
@@ -169,20 +186,26 @@ private struct DayDot: View {
                 Circle()
                     .stroke(strokeColor, lineWidth: cell.isToday ? 1.2 : 0.5)
             )
-            .shadow(color: shadowColor, radius: cell.isToday ? 4 : (heatmap && intensity > 0 ? 3 : 0))
+            .shadow(color: shadowColor, radius: cell.isToday ? 4 : (intensity > 0 ? 3 : 0))
             .opacity(cell.dayKey == nil ? 0 : 1)
             .frame(maxWidth: 14, maxHeight: 14)
             .frame(height: 14)
     }
 
     private var fill: Color {
-        guard let _ = cell.dayKey else { return .clear }
+        guard cell.dayKey != nil else { return .clear }
         if heatmap {
+            // Heat mode — graduated mint by completion ratio. Tasks
+            // and habits both contribute, so a partial day still
+            // shows a softer fill.
             return intensity == 0
                 ? Color.white.opacity(0.06)
                 : WatchTheme.cMint.opacity(0.30 + intensity * 0.55)
         }
-        return intensity > 0
+        // Dots mode — only paint green for a perfect day. Source of
+        // truth is the iPhone's perfect-day set, so adding a new
+        // uncompleted task today drops the dot here too.
+        return isPerfect
             ? WatchTheme.cMint.opacity(0.85)
             : Color.white.opacity(0.06)
     }
@@ -195,6 +218,7 @@ private struct DayDot: View {
     private var shadowColor: Color {
         if cell.isToday { return WatchTheme.cAmber.opacity(0.6) }
         if heatmap && intensity > 0 { return WatchTheme.cMint.opacity(0.45) }
+        if !heatmap && isPerfect { return WatchTheme.cMint.opacity(0.45) }
         return .clear
     }
 }
