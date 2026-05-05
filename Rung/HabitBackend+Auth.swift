@@ -22,15 +22,19 @@ extension HabitBackendStore {
     }
 
     /// Sign in with Apple. The caller (AuthViews) hands us the verified
-    /// identityToken from `ASAuthorizationAppleIDCredential` plus the
-    /// optional name Apple returns on first sign-in. Backend handles the
-    /// rest — verifying the token, linking or creating the account, and
-    /// returning the same JWT pair as password login.
-    func signInWithApple(identityToken: String, displayName: String?) async {
+    /// identityToken from `ASAuthorizationAppleIDCredential`, the
+    /// one-time `authorizationCode` (nil for returning sign-ins where
+    /// Apple already linked the account), and the optional name Apple
+    /// returns on first sign-in. Backend verifies the token, exchanges
+    /// the code for a refresh token (so it can later call Apple's
+    /// `/auth/revoke` on account deletion per App Store compliance),
+    /// and returns the same JWT pair as password login.
+    func signInWithApple(identityToken: String, authorizationCode: String?, displayName: String?) async {
         authRequestState = .loading; refreshSyncingState()
         do {
             let session = try await authRepository.signInWithApple(
                 identityToken: identityToken,
+                authorizationCode: authorizationCode,
                 displayName: displayName
             )
             applySession(session)

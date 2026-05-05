@@ -9,17 +9,17 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Rung uses Apple Health data to verify your habits and award accurate leaderboard points.</string>
+	<string>Rung reads your workouts, steps, mindful minutes, sleep stages, hydration, and body mass to auto-check matching habits the moment you finish them and to draw your daily energy curve. Your health data never leaves your account and is never shared with advertisers.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Rung can log workouts and mindfulness minutes back to Apple Health.</string>
+	<string>Rung does not write to Apple Health on iPhone or iPad — workouts started from Apple Watch are saved by watchOS so your iPhone can credit them automatically.</string>
 	<key>NSUserNotificationsUsageDescription</key>
-	<string>Rung sends habit reminders, streak warnings, and accountability nudges from your mentor.</string>
+	<string>Rung sends habit reminders, streak-at-risk warnings, and accountability nudges from your mentor. You can disable any category in Account → Notifications.</string>
 	<key>NSFamilyControlsUsageDescription</key>
-	<string>Rung uses Screen Time limits to verify your social-media-detox habits without tracking what you do in those apps.</string>
+	<string>Rung uses Screen Time limits to verify your social-media-detox habits each day. The exact apps you use are never sent to Rung — only whether you stayed under the daily cap you set.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Rung reads today's events so it can suggest a streak freeze on busy days and surface tasks tied to your meetings.</string>
+	<string>Rung reads today's events on your local calendar so it can suggest a workout window between meetings and propose a streak freeze on packed days. Your event titles never leave the device.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Rung reads today's events so it can suggest a streak freeze on busy days and surface tasks tied to your meetings.</string>
+	<string>Rung reads today's events on your local calendar so it can suggest a workout window between meetings and propose a streak freeze on packed days. Your event titles never leave the device.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIRequiresFullScreen</key>

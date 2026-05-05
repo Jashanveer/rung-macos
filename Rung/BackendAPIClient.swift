@@ -86,10 +86,14 @@ actor BackendAPIClient {
     /// own JWT pair. The backend verifies the token against Apple's JWKS,
     /// then either looks up the linked account or provisions a new one
     /// from the embedded email (only sent on the first authorization).
-    func appleLogin(identityToken: String, displayName: String?) async throws -> BackendSession {
+    func appleLogin(identityToken: String, authorizationCode: String?, displayName: String?) async throws -> BackendSession {
         let tokens: BackendAuthTokens = try await request(
             path: "/api/auth/apple", method: "POST",
-            body: AppleLoginRequest(identityToken: identityToken, displayName: displayName)
+            body: AppleLoginRequest(
+                identityToken: identityToken,
+                authorizationCode: authorizationCode,
+                displayName: displayName
+            )
         )
         let s = BackendSession.fromAuthTokens(tokens)
         session = s
@@ -382,7 +386,11 @@ actor BackendAPIClient {
     private struct EmailVerificationRequest: Encodable { let email: String }
     private struct RegisterRequest: Encodable { let username, email, password, avatarUrl, verificationCode: String }
     private struct RefreshRequest:  Encodable { let refreshToken: String }
-    private struct AppleLoginRequest: Encodable { let identityToken: String; let displayName: String? }
+    private struct AppleLoginRequest: Encodable {
+        let identityToken: String
+        let authorizationCode: String?
+        let displayName: String?
+    }
     private struct ProfileSetupRequest: Encodable { let username: String; let avatarUrl: String; let displayName: String? }
     private struct UsernameAvailabilityResponse: Decodable { let available: Bool }
     /// Mirror of `/api/me` and the response of `/api/users/me/setup-profile`.

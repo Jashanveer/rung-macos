@@ -209,6 +209,12 @@ private struct ConnectingView: View {
                 signInError = "Apple didn't return a token."
                 return
             }
+            // One-time auth code — backend exchanges it for a refresh
+            // token so it can later call Apple's `/auth/revoke` when
+            // the user deletes their account (App Store compliance).
+            // Nil on returning sign-ins where Apple already linked.
+            let authCode: String? = credential.authorizationCode
+                .flatMap { String(data: $0, encoding: .utf8) }
             let displayName: String? = {
                 guard let components = credential.fullName else { return nil }
                 let formatter = PersonNameComponentsFormatter()
@@ -223,6 +229,7 @@ private struct ConnectingView: View {
                     let client = WatchBackendClient()
                     let auth = try await client.exchangeAppleToken(
                         identityToken: identityToken,
+                        authorizationCode: authCode,
                         displayName: displayName
                     )
                     await backend.acceptAuthResult(auth)

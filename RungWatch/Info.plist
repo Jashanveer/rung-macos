@@ -40,8 +40,8 @@
         <string>workout-processing</string>
     </array>
     <key>NSHealthShareUsageDescription</key>
-    <string>Rung reads heart rate and workout data on your watch so it can verify cardio habits the moment you finish, without you having to tap.</string>
+    <string>Rung reads your heart rate, calories burned, and workout data on Apple Watch so it can auto-check cardio habits the moment you finish, with no extra tap. Your health data never leaves your account.</string>
     <key>NSHealthUpdateUsageDescription</key>
-    <string>Rung saves the workouts you start from the watch into Apple Health so the iPhone app can credit them automatically.</string>
+    <string>Rung saves the workouts you start from the watch's Pomodoro and Add screens into Apple Health so Rung on iPhone can credit them automatically and they show up in your Activity rings.</string>
 </dict>
 </plist>

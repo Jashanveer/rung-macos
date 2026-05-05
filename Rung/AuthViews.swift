@@ -839,6 +839,15 @@ struct AuthGateView: View {
                 backend.errorMessage = "Apple didn't return an identity token"
                 return
             }
+            // `authorizationCode` is one-time and only required server-side
+            // to exchange for the refresh token Rung needs in order to call
+            // Apple's `/auth/revoke` when the user deletes their account
+            // (App Store account-deletion compliance). It's nil on
+            // returning sign-ins where Apple already linked the account
+            // — that's fine; the backend just keeps the previously
+            // exchanged refresh token.
+            let authCode: String? = credential.authorizationCode
+                .flatMap { String(data: $0, encoding: .utf8) }
             let displayName: String? = {
                 guard let components = credential.fullName else { return nil }
                 let formatter = PersonNameComponentsFormatter()
@@ -846,7 +855,11 @@ struct AuthGateView: View {
                 return formatted.isEmpty ? nil : formatted
             }()
             onAuthStart?()
-            await backend.signInWithApple(identityToken: token, displayName: displayName)
+            await backend.signInWithApple(
+                identityToken: token,
+                authorizationCode: authCode,
+                displayName: displayName
+            )
             if backend.isAuthenticated {
                 onAuthenticated()
             } else {

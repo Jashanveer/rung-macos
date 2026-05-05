@@ -45,7 +45,7 @@ struct FriendsTab: View {
             Text("No friends yet")
                 .font(WatchTheme.font(.body, scale: scale, weight: .semibold))
                 .foregroundStyle(WatchTheme.ink)
-            Text("Invite from\nthe iPhone app")
+            Text("Invite from\nRung on iPhone")
                 .font(WatchTheme.font(.caption, scale: scale, weight: .medium))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(WatchTheme.inkSoft)

@@ -330,6 +330,28 @@ struct AccountActionsCard: View {
                 action: backend.signOut
             )
 
+            // Inline legal links — Apple Review's account-deletion
+            // guide (5.1.1(v)) requires the privacy policy and terms
+            // be reachable from inside the app, not just the App
+            // Store listing. Placed above the destructive Delete row
+            // so users are reminded of the policy before tearing
+            // down the account.
+            LegalLinkRow(
+                title: "Privacy Policy",
+                systemImage: "lock.shield.fill",
+                url: LegalURLs.privacyPolicy
+            )
+            LegalLinkRow(
+                title: "Terms of Service",
+                systemImage: "doc.text.fill",
+                url: LegalURLs.termsOfService
+            )
+            LegalLinkRow(
+                title: "Manage Sign in with Apple",
+                systemImage: "person.badge.key.fill",
+                url: LegalURLs.manageAppleAccount
+            )
+
             Button {
                 showDeleteConfirm = true
             } label: {
@@ -344,11 +366,69 @@ struct AccountActionsCard: View {
                 shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
                 level: .control
             )
+
+            Text("Deleting your account also revokes Rung's Sign in with Apple authorization on Apple's servers. Your habit history, mentor messages, sleep snapshots, and friend connections are removed from the server immediately.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cleanShotSurface(
             shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+            level: .control
+        )
+    }
+}
+
+/// Canonical URLs for Rung's legal documents + Apple ID management.
+/// Stays in one place so the watch's Account tab and the iOS / iPad /
+/// macOS Settings panel both link to the same canonical URLs.
+/// **Update the placeholders below to the real URLs before
+/// submitting to App Review** — App Store Connect cross-checks the
+/// privacy policy URL on the listing against the one surfaced inside
+/// the app, and a 404 here is a guaranteed reject under 5.1.1(i).
+enum LegalURLs {
+    static let privacyPolicy = URL(string: "https://rung.app/privacy")!
+    static let termsOfService = URL(string: "https://rung.app/terms")!
+    static let manageAppleAccount = URL(string: "https://account.apple.com")!
+    static let support = URL(string: "https://rung.app/support")!
+}
+
+/// Glass-styled link row that opens the given URL in the system
+/// browser. Used inside `AccountActionsCard` for Privacy Policy /
+/// Terms / Manage Sign in with Apple. Renders an SF Symbol on the
+/// left, the title in the middle, and an `arrow.up.right.square`
+/// glyph on the right so users know it leaves the app.
+private struct LegalLinkRow: View {
+    let title: String
+    let systemImage: String
+    let url: URL
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            openURL(url)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(CleanShotTheme.accent)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .cleanShotSurface(
+            shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
             level: .control
         )
     }
@@ -1289,6 +1369,21 @@ struct AcknowledgmentsCard: View {
                 shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
                 level: .control
             )
+
+            // Apple trademark attribution — required by Apple's
+            // <https://www.apple.com/legal/intellectual-property/guidelinesfor3rdparties.html>
+            // when third-party apps reference Apple, Apple Health, Apple
+            // Watch, etc. in user-facing copy. Lives at the bottom of the
+            // Account screen so it's discoverable but doesn't crowd the
+            // primary controls. Wording matches Apple's recommended
+            // international form (no ®/™ since Rung ships in many
+            // locales — Apple's guidance is to drop the symbols outside
+            // the US).
+            Text("Apple, Apple Health, Apple Watch, iPhone, iPad, Mac, App Store, and Sign in with Apple are trademarks of Apple Inc., registered in the U.S. and other countries and regions. Rung is not affiliated with or endorsed by Apple Inc.")
+                .font(.system(size: 9.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -830,8 +830,8 @@
 				INFOPLIST_FILE = Rung/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Rung;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Rung uses Apple Health data to verify your habits and award accurate leaderboard points.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Rung can log workouts and mindfulness minutes back to Apple Health.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Rung reads your workouts, steps, mindful minutes, sleep stages, hydration, and body mass to auto-check matching habits the moment you finish them and to draw your daily energy curve. Your health data never leaves your account and is never shared with advertisers.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Rung does not write to Apple Health on Mac — workouts started from Apple Watch are saved by watchOS so the Mac app can credit them automatically.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -883,8 +883,8 @@
 				INFOPLIST_FILE = Rung/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Rung;
 				INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking = YES;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Rung uses Apple Health data to verify your habits and award accurate leaderboard points.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Rung can log workouts and mindfulness minutes back to Apple Health.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Rung reads your workouts, steps, mindful minutes, sleep stages, hydration, and body mass to auto-check matching habits the moment you finish them and to draw your daily energy curve. Your health data never leaves your account and is never shared with advertisers.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Rung does not write to Apple Health on Mac — workouts started from Apple Watch are saved by watchOS so the Mac app can credit them automatically.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

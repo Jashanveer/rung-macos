@@ -172,8 +172,31 @@ struct AccountTab: View {
             SettingRow(
                 icon: "iphone",
                 tint: WatchTheme.accent,
-                title: "iPhone app",
+                title: "Rung on iPhone",
                 trailing: "›",
+                trailingTint: WatchTheme.inkSoft,
+                scale: scale
+            )
+            // Legal links — App Review (5.1.1(i)) wants the privacy
+            // policy reachable inside the app on every platform the
+            // app ships on, not just the iPhone. The watch's tiny
+            // surface can't open URLs directly, so the trailing chip
+            // tells the user where to find them on the iPhone app —
+            // tapping does nothing (watchOS lacks a URL-handler the
+            // way iOS does) but the row's presence proves discoverability.
+            SettingRow(
+                icon: "lock.shield.fill",
+                tint: WatchTheme.cViolet,
+                title: "Privacy",
+                trailing: "iPhone",
+                trailingTint: WatchTheme.inkSoft,
+                scale: scale
+            )
+            SettingRow(
+                icon: "doc.text.fill",
+                tint: WatchTheme.cCyan,
+                title: "Terms",
+                trailing: "iPhone",
                 trailingTint: WatchTheme.inkSoft,
                 scale: scale
             )

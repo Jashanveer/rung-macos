@@ -220,6 +220,7 @@ struct WatchBackendClient {
     /// breaks the chicken-and-egg the WC auth handoff has.
     func exchangeAppleToken(
         identityToken: String,
+        authorizationCode: String?,
         displayName: String?
     ) async throws -> AuthResult {
         var request = URLRequest(url: Self.baseURL.appendingPathComponent("api/auth/apple"))
@@ -227,7 +228,11 @@ struct WatchBackendClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        let body = AppleLoginRequest(identityToken: identityToken, displayName: displayName)
+        let body = AppleLoginRequest(
+            identityToken: identityToken,
+            authorizationCode: authorizationCode,
+            displayName: displayName
+        )
         request.httpBody = try JSONEncoder().encode(body)
 
         let data: Data
@@ -252,6 +257,7 @@ struct WatchBackendClient {
 
     private struct AppleLoginRequest: Encodable {
         let identityToken: String
+        let authorizationCode: String?
         let displayName: String?
     }
 

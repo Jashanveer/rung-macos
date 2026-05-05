@@ -9,8 +9,12 @@ struct AuthRepository {
         try await client.login(username: username, password: password)
     }
 
-    func signInWithApple(identityToken: String, displayName: String?) async throws -> BackendSession {
-        try await client.appleLogin(identityToken: identityToken, displayName: displayName)
+    func signInWithApple(identityToken: String, authorizationCode: String?, displayName: String?) async throws -> BackendSession {
+        try await client.appleLogin(
+            identityToken: identityToken,
+            authorizationCode: authorizationCode,
+            displayName: displayName
+        )
     }
 
     func isUsernameAvailable(_ username: String) async throws -> Bool {
